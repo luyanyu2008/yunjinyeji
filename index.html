@@ -520,9 +520,9 @@ tr:hover td{background:rgba(201,169,97,.05)}
       <span style="font-size:14px">❋</span>
       <span class="login-deco-line"></span>
     </div>
-    <form class="login-form" id="loginForm" onsubmit="return false">
-      <input class="login-input" id="loginUser" placeholder="请输入账号" autocomplete="username">
-      <input class="login-input" id="loginPass" type="password" placeholder="请输入密码" autocomplete="current-password">
+    <form class="login-form" id="loginForm" onsubmit="return false" autocomplete="on">
+      <input class="login-input" id="loginUser" name="username" placeholder="请输入账号" autocomplete="username">
+      <input class="login-input" id="loginPass" name="password" type="password" placeholder="请输入密码" autocomplete="current-password">
       <div class="login-err" id="loginErr"></div>
       <button class="login-btn" id="loginBtn" type="submit">登 录</button>
     </form>
@@ -614,6 +614,17 @@ tr:hover td{background:rgba(201,169,97,.05)}
         <div class="form-row">
           <div class="form-item"><label class="form-label required">日期</label>
             <input type="date" class="form-input" id="perfDate"></div>
+          <div class="form-item"><label class="form-label required">客户来源</label>
+            <select class="form-select" id="perfSource">
+              <option value="转介绍">转介绍</option>
+              <option value="老客户">老客户</option>
+              <option value="推荐">推荐</option>
+              <option value="微信">微信</option>
+              <option value="抖音">抖音</option>
+              <option value="小红书">小红书</option>
+              <option value="美团大众点评">美团/大众点评</option>
+              <option value="其他" selected>其他</option>
+            </select></div>
           <div class="form-item"><label class="form-label">加班小时</label>
             <input type="number" class="form-input" id="perfOvertime" value="0" step="0.5" min="0"></div>
           <div class="form-item"><label class="form-label">迟到分钟</label>
@@ -623,7 +634,8 @@ tr:hover td{background:rgba(201,169,97,.05)}
         </div>
       </div>
       <div class="card">
-        <div class="card-title">客户服务明细（点击 +/- 快速录入）</div>
+        <div class="card-title">客户服务明细(每个 +/- 增减 0.5,即一个妆或一个头算 0.5)</div>
+        <div style="font-size:12px;color:var(--c-muted);margin-bottom:8px">💡 一整单(妆+头) = 1,只画妆或只盘头 = 0.5,业绩自动算半价</div>
         <div id="perfItemList"></div>
       </div>
       <div class="card">
@@ -897,6 +909,16 @@ tr:hover td{background:rgba(201,169,97,.05)}
       <div id="cloudContent"></div>
     </div>
 
+    <!-- 客服报备(客服 + 店长) -->
+    <div class="page" id="page-cs">
+      <div class="page-header">
+        <button class="page-back" onclick="Router.go('home')">←</button>
+        <div class="page-title-bar"></div>
+        <div class="page-title">📞 线上客服报备</div>
+      </div>
+      <div id="csContent"></div>
+    </div>
+
   </main>
 </div>
 
@@ -980,8 +1002,8 @@ const Bus = {
 
 /* ============ DataStore 数据层（IndexedDB） ============ */
 const DB_NAME='yj_ems_v3';
-const DB_VERSION=3;
-const STORES=['users','attendance','performance','leaves','summaries','settings','inspirations','operation_logs','learning_courses'];
+const DB_VERSION=4;
+const STORES=['users','attendance','performance','leaves','summaries','settings','inspirations','operation_logs','learning_courses','cs_reports'];
 
 const DataStore = {
   db:null,
@@ -1192,7 +1214,10 @@ const LEVELS = {
   intern: {name:'实习生',     baseJob:0,   target:0,    dailyAllowance:50, type:'intern'},
   junior: {name:'初级化妆师', baseJob:500, target:15000, type:'mua'},
   middle: {name:'中级化妆师', baseJob:800, target:25000, type:'mua'},
-  senior: {name:'高级化妆师', baseJob:1200,target:35000, type:'mua'}
+  senior: {name:'高级化妆师', baseJob:1200,target:35000, type:'mua'},
+  // 线上客服:每日报备组数,按组提成,不走化妆师/实习生那套
+  customer: {name:'线上客服', baseJob:0, target:0, type:'customer',
+             photoCommission:20, makeupCommission:15}  // 摄影组¥20/组,妆造组¥15/组,纯提成,无底薪无全勤
 };
 
 const BASE_SALARY=2200, ATTENDANCE_BONUS=300;
@@ -1200,6 +1225,16 @@ const OT_RATE=10, LATE_FINE=1, LEAVE_FINE=100;
 const NO_SUMMARY_FINE=5;  // 当日有签到但未写工作总结,扣 5 元
 // 好评奖励规则:1平台3,2平台5,3平台集齐8
 const REVIEW_REWARDS = {1:3,2:5,3:8};
+// 客服提成
+const PHOTO_COMMISSION=20;    // 摄影 ¥20/组
+const MAKEUP_COMMISSION=15;   // 妆造 ¥15/组
+// 客户来源(用于客服报备和渠道统计)
+const CUSTOMER_SOURCES = ['转介绍','老客户','推荐','酒店推荐','微信','抖音','小红书','美团大众点评','其他'];
+// 预约方式
+const BOOKING_TYPES = ['定金预约','直接来','待跟进'];
+// 客资完整状态
+// pending(待跟进) → followup(跟进中) → booked(定金预约) / direct(直接来) → arrived(已到店) → deal(已成交)
+// 也可能 cancel(取消) / noshow(放鸽子未到)
 
 const QUOTES = [
   '云鬓花颜金步摇 · 芙蓉帐暖度春宵',
@@ -1406,12 +1441,19 @@ const Calc = {
 
   // 完整月度薪酬计算(根据 user.level 路由到对应算法)
   // summaries 参数可选,如传入则计算"未写总结"扣款
-  calcMonthSalary(user,perfRecords,attRecords,leaveRecords,month,summaryRecords){
+  // csReports 参数可选,客服薪酬计算时使用
+  calcMonthSalary(user,perfRecords,attRecords,leaveRecords,month,summaryRecords,csReportRecords){
     const level=LEVELS[user.level]||LEVELS.middle;
     const perf=perfRecords.filter(r=>r.userId===user.id && isSameMonth(r.date,month));
     const att =attRecords.filter(r=>r.userId===user.id && isSameMonth(r.date,month));
     const leaves=leaveRecords.filter(r=>r.userId===user.id && r.status==='approved' && isSameMonth(r.startDate,month));
     const summaries=(summaryRecords||[]).filter(r=>r.userId===user.id && isSameMonth(r.date||r.createdAt&&new Date(r.createdAt).toISOString().slice(0,10),month));
+    
+    // 客服:把当月客资挂到 user 临时字段(不污染原对象)
+    if(level.type==='customer'){
+      const csReports=(csReportRecords||[]).filter(r=>r.csUserId===user.id && isSameMonth(r.appointDate||r.createdAt&&new Date(r.createdAt).toISOString().slice(0,10),month));
+      user._csReports=csReports;
+    }
 
     // 计算未写总结天数:有签到但当日没有总结记录,且不是请假日
     const leaveDates=new Set();
@@ -1450,11 +1492,18 @@ const Calc = {
 
     if(level.type==='intern'){
       const result=this._calcInternSalary(user,level,perf,att,leaves);
-      // 实习生也扣未写总结
       result.missingSummaryDays=missingSummaryDays;
       result.noSummaryFine=noSummaryFine;
       result.deduct=(result.deduct||0)+noSummaryFine;
       result.net=Math.max(0,result.gross-result.deduct);
+      return result;
+    }
+    if(level.type==='customer'){
+      // 客服:从 perfRecords 中拿不到客资,需要传 csReportRecords 参数
+      // 用户记录上挂上当月客资,_calcCustomerSalary 即可读取
+      // (csReports 实际由 calcMonthSalary 第 6 个参数传入,见下方扩展)
+      const result=this._calcCustomerSalary(user,level,perf,att,leaves,month);
+      // 客服无未写总结扣款(本来就无底薪可扣)
       return result;
     }
     const result=this._calcMuaSalary(user,level,perf,att,leaves);
@@ -1463,6 +1512,64 @@ const Calc = {
     result.deduct=(result.deduct||0)+noSummaryFine;
     result.net=Math.max(0,result.gross-result.deduct);
     return result;
+  },
+
+  // 线上客服薪酬:纯提成模式
+  // 仅"已成交"客资计提成:摄影组×20 + 妆造组×15
+  // 无底薪、无全勤、不扣迟到/请假/未写总结(因为无工资可扣)
+  _calcCustomerSalary(user,level,perf,att,leaves,month){
+    const num=v=>{const n=Number(v);return isNaN(n)?0:n};
+    
+    // user._csReports 由调用方注入(本月内 status==='deal' 的客资)
+    const dealReports=(user._csReports||[]).filter(r=>r.status==='deal');
+    
+    // 每条已成交客资:有摄影=¥20,无摄影=¥15(妆造)
+    // "一组不管多少人都是 15,带摄影是 20"
+    let photoGroups=0, makeupGroups=0;
+    let photoCommission=0, makeupCommission=0;
+    
+    dealReports.forEach(r=>{
+      if(r.withPhoto){
+        photoGroups++;
+        photoCommission+=PHOTO_COMMISSION;
+      }else{
+        makeupGroups++;
+        makeupCommission+=MAKEUP_COMMISSION;
+      }
+    });
+    
+    const totalGroups=photoGroups+makeupGroups;
+    
+    // 客服无底薪、无全勤、无扣款
+    const gross=photoCommission+makeupCommission;
+    const net=gross;
+    
+    // 转化率:成交数 / 总客资数
+    const allCsReports=(user._csReports||[]);
+    const conversionRate=allCsReports.length>0
+      ? Math.round(dealReports.length/allCsReports.length*1000)/10
+      : 0;
+    
+    return {
+      user,level,kind:'customer',
+      // 客服特有字段
+      photoGroups, makeupGroups, totalGroups,
+      photoCommission, makeupCommission,
+      conversionRate,
+      totalCsCount: allCsReports.length,
+      dealCsCount: dealReports.length,
+      // 兼容化妆师字段(其他模块可能引用,全部归零)
+      baseSalary:0, attBonus:0, attBonusLost:false,
+      totalPerf:0, ratio:0,
+      jobPay:0, jobBase:0, target:0,
+      overAmount:0, bonus:0, bonusSegments:[],
+      overtimeHours:0, overtimePay:0,
+      reviewCount:0, reviewReward:0,
+      lateMinutes:0, earlyMinutes:0, lateEarlyFine:0,
+      leaveDays:0, leaveFine:0,
+      missingSummaryDays:0, noSummaryFine:0,
+      gross, deduct:0, net:Math.round(net*100)/100
+    };
   }
 };
 
@@ -1485,7 +1592,8 @@ const CloudSync = {
     settings:'yj_settings',
     inspirations:'yj_inspirations',
     operation_logs:'yj_operation_logs',
-    learning_courses:'yj_learning_courses'
+    learning_courses:'yj_learning_courses',
+    cs_reports:'yj_cs_reports'
   },
 
   loadConfig(){
@@ -1514,28 +1622,112 @@ const CloudSync = {
     Bus.emit('cloud:status',this.status);
   },
 
-  // 调用 Supabase REST API
+  // 调用 Supabase REST API(增强版)
+  // 数据消毒:清理可能导致 fetch 报错的非法字符
+  _sanitizeForJson(value){
+    if(value===null||value===undefined)return null;
+    if(typeof value==='string'){
+      // 移除控制字符(除了 \n \r \t)
+      return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,'');
+    }
+    if(typeof value==='number'||typeof value==='boolean')return value;
+    if(typeof value==='function'||typeof value==='symbol')return null;
+    if(Array.isArray(value)){
+      return value.map(v=>this._sanitizeForJson(v));
+    }
+    if(typeof value==='object'){
+      const out={};
+      for(const k in value){
+        if(Object.prototype.hasOwnProperty.call(value,k)){
+          out[k]=this._sanitizeForJson(value[k]);
+        }
+      }
+      return out;
+    }
+    return null;
+  },
+
+  // 调用 Supabase REST API(增强版,极致防御)
   async _request(table, opts={}){
     if(!this.cfg)throw new Error('云端未配置');
-    const {method='GET', body, query=''} = opts;
-    const url=`${this.cfg.url}/rest/v1/${table}${query}`;
-    const headers={
-      'apikey':this.cfg.anonKey,
-      'Authorization':`Bearer ${this.cfg.anonKey}`,
-      'Content-Type':'application/json',
-      'Prefer':method==='POST'?'resolution=merge-duplicates':'return=representation'
-    };
-    const res=await fetch(url,{
-      method,
-      headers,
-      body:body?JSON.stringify(body):undefined
-    });
-    if(!res.ok){
-      const txt=await res.text();
-      throw new Error(`HTTP ${res.status}: ${txt}`);
+    if(!this.cfg.url||!this.cfg.anonKey)throw new Error('云端配置不完整');
+    
+    const {method='GET', body, query='', upsert=false} = opts;
+    
+    // Upsert 模式:URL 自动加 on_conflict=id
+    let finalQuery = query;
+    if(upsert){
+      finalQuery = (query?query+'&':'?') + 'on_conflict=id';
     }
+    
+    // 构建 URL 并验证
+    const url=`${this.cfg.url}/rest/v1/${table}${finalQuery}`;
+    try{new URL(url)}catch(e){
+      throw new Error(`URL 无效: ${url}`);
+    }
+    
+    // 清理 key 中的非法字符(空格/换行)
+    const cleanKey=String(this.cfg.anonKey).trim().replace(/[\r\n\t]/g,'');
+    if(!cleanKey)throw new Error('密钥为空');
+    
+    // 构建 headers,使用普通对象避免 postMessage 克隆问题
+    // 但同时用 Headers 对象做合法性预检,确保值合法
+    const headers={
+      'apikey':cleanKey,
+      'Authorization':'Bearer '+cleanKey,
+      'Content-Type':'application/json'
+    };
+    if(method==='POST' && upsert){
+      headers['Prefer']='resolution=merge-duplicates,return=minimal';
+    }else if(method==='POST'||method==='PATCH'){
+      headers['Prefer']='return=minimal';
+    }
+    // 合法性预检(传给临时 Headers 看是否抛错,然后丢弃)
+    try{
+      const tmp=new Headers();
+      for(const k in headers)tmp.set(k,headers[k]);
+    }catch(e){
+      throw new Error('Header 校验失败(密钥可能含非法字符): '+e.message);
+    }
+    
+    // body 序列化:做数据消毒
+    let bodyStr;
+    if(body){
+      try{
+        const sanitized=this._sanitizeForJson(body);
+        bodyStr=JSON.stringify(sanitized);
+        // 大小检查
+        const sizeKB=Math.round(bodyStr.length/1024);
+        if(sizeKB>1024){
+          throw new Error(`数据过大 ${sizeKB}KB(限制 1MB),可能含过大图片`);
+        }
+      }catch(e){
+        throw new Error('数据序列化失败: '+e.message);
+      }
+    }
+    
+    let res;
+    try{
+      res=await fetch(url,{method, headers, body:bodyStr});
+    }catch(e){
+      // 这里捕获 fetch 抛的 TypeError 等
+      throw new Error(`网络错误: ${e.message}`);
+    }
+    
+    if(!res.ok){
+      let detail='';
+      try{detail=await res.text()}catch(e){}
+      const detailShort = detail.length>500 ? detail.slice(0,500)+'...' : detail;
+      throw new Error(`HTTP ${res.status}: ${detailShort||res.statusText}`);
+    }
+    
     if(res.status===204)return null;
-    return await res.json();
+    
+    const ct=res.headers.get('content-type')||'';
+    if(ct.includes('application/json')){
+      try{return await res.json()}catch(e){return null}
+    }
+    return null;
   },
 
   // 测试连接
@@ -1573,18 +1765,22 @@ const CloudSync = {
     }
   },
 
-  // 上传单条记录(用于实时同步)
+  // 上传单条记录(用于实时同步,使用 upsert 语义)
   async pushOne(store, data){
     const table=this.STORE_TABLE_MAP[store];
     if(!table)return;
-    // 包成云端格式: {id, store, payload, _updatedAt, _ver}
     const row={
       id: data.id,
       payload: data,
       updated_at: new Date(data._updatedAt||Date.now()).toISOString(),
       ver: data._ver||3
     };
-    await this._request(table,{method:'POST', body:[row]});
+    // 检查大小:超过 800KB 警告(Supabase 默认 body 限制 ~1MB)
+    const sizeKB=Math.round(JSON.stringify(row).length/1024);
+    if(sizeKB>800){
+      console.warn(`[Cloud] 记录过大: ${store}/${data.id} ${sizeKB}KB,可能上传失败`);
+    }
+    await this._request(table,{method:'POST', body:[row], upsert:true});
   },
 
   async deleteOne(store, id){
@@ -1629,8 +1825,9 @@ const CloudSync = {
   // 全量推送所有本地数据到云端(初次同步用)
   async pushAll(){
     if(!this.enabled)return {ok:false,msg:'云端未配置'};
-    let total=0;
-    let currentTable='',currentStore='';
+    let total=0,skipped=0,failed=0;
+    const errors=[];
+    let currentTable='',currentStore='',currentRecord=null;
     try{
       this.syncing=true;
       Bus.emit('cloud:status','syncing');
@@ -1641,26 +1838,56 @@ const CloudSync = {
         const table=this.STORE_TABLE_MAP[store];
         currentTable=table;
         console.log(`[Cloud] 推送 ${store} → ${table}: ${rows.length} 条`);
-        for(let i=0;i<rows.length;i+=50){
-          const batch=rows.slice(i,i+50).map(d=>({
-            id:d.id,
-            payload:d,
-            updated_at:new Date(d._updatedAt||Date.now()).toISOString(),
-            ver:d._ver||3
-          }));
-          await this._request(table,{method:'POST',body:batch});
-          total+=batch.length;
+        
+        // 逐条上传(更可靠,失败一条不影响其他)
+        for(const d of rows){
+          currentRecord=d;
+          const row={
+            id: d.id,
+            payload: d,
+            updated_at: new Date(d._updatedAt||Date.now()).toISOString(),
+            ver: d._ver||3
+          };
+          // 大小检查
+          const size=JSON.stringify(row).length;
+          if(size>900*1024){
+            console.warn(`[Cloud] 跳过过大记录: ${store}/${d.id} (${Math.round(size/1024)}KB)`);
+            skipped++;
+            continue;
+          }
+          try{
+            await this._request(table,{method:'POST', body:[row], upsert:true});
+            total++;
+          }catch(e){
+            failed++;
+            errors.push({store,table,id:d.id,err:e.message,size:Math.round(size/1024)+'KB'});
+            console.error(`[Cloud] 失败 ${table}/${d.id}:`, e.message);
+            // 第一次失败就停下,避免刷屏
+            if(failed===1){
+              throw new Error(`首次失败发生在 ${table}/${d.id}: ${e.message}`);
+            }
+          }
         }
       }
       this.status='online';
       this.lastSync=Date.now();
+      localStorage.setItem('yj_last_sync',String(this.lastSync));
       Bus.emit('cloud:status',this.status);
-      return {ok:true,count:total};
+      console.log(`[Cloud] 推送完成: 成功 ${total},跳过 ${skipped},失败 ${failed}`);
+      return {ok:true,count:total,skipped,failed};
     }catch(e){
       this.status='error';
       Bus.emit('cloud:status',this.status);
-      console.error(`[Cloud] pushAll 失败,卡在表 ${currentTable} (store=${currentStore}):`,e);
-      return {ok:false,msg:`推送失败 (表:${currentTable}): ${e.message}`,table:currentTable,store:currentStore};
+      console.error(`[Cloud] pushAll 中止于 ${currentTable}/${currentRecord?.id}:`,e);
+      return {
+        ok:false,
+        msg:e.message,
+        table:currentTable,
+        store:currentStore,
+        progress:`已推送 ${total} 条,在 ${currentTable} 表卡住`,
+        firstError:errors[0]||{store:currentStore,table:currentTable,err:e.message},
+        errors
+      };
     }finally{
       this.syncing=false;
     }
@@ -1669,6 +1896,15 @@ const CloudSync = {
   // 监听本地写入事件,异步推到云端(失败入队列稍后重试)
   async _onLocalWrite({store,data,op}){
     if(!this.enabled)return;
+    
+    // 操作日志和会话级数据,延迟批量同步(每分钟由 flushQueue 处理一次,不实时)
+    const isLowPriority = (store==='operation_logs');
+    if(isLowPriority){
+      this.pendingQueue.push({store,data,op,t:Date.now()});
+      this._saveQueue();
+      return;
+    }
+    
     // 如果离线,加入队列
     if(this.status==='error'){
       this.pendingQueue.push({store,data,op,t:Date.now()});
@@ -1762,19 +1998,88 @@ const CloudSync = {
     }
   },
 
-  // 生成建表 SQL(供店长在 Supabase 控制台粘贴执行)
+  // 生成建表 SQL(工业级,可重复执行,无副作用)
   getInitSQL(){
-    return Object.values(this.STORE_TABLE_MAP).map(t=>
-`CREATE TABLE IF NOT EXISTS ${t} (
-  id TEXT PRIMARY KEY,
-  payload JSONB NOT NULL,
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  ver INT DEFAULT 3
+    const tables=Object.values(this.STORE_TABLE_MAP);
+    
+    const header=`-- =============================================================
+-- 云锦长安 EMS · Supabase 数据库初始化脚本 v4
+-- =============================================================
+-- 使用方法:
+-- 1. 全选这整段 SQL → 复制
+-- 2. 进入 Supabase 项目 → 左侧 SQL Editor → New query
+-- 3. 粘贴 → 点右下角 Run(或 Ctrl+Enter)
+-- 4. 等待 5-10 秒,提示 "Success. No rows returned"
+-- 5. 回到本系统点【🔬 一键全链路诊断】验证
+-- 
+-- 本脚本可重复执行,不会破坏已有数据
+-- =============================================================
+
+`;
+    
+    const tableSqls=tables.map((t,idx)=>
+`-- =================== ${idx+1}/${tables.length} 表: ${t} ===================
+
+-- 1) 建表(若已存在则跳过)
+CREATE TABLE IF NOT EXISTS public.${t} (
+  id          TEXT PRIMARY KEY,
+  payload     JSONB NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ver         INTEGER NOT NULL DEFAULT 3
 );
-ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "anon_all" ON ${t};
-CREATE POLICY "anon_all" ON ${t} FOR ALL USING (true) WITH CHECK (true);`
+
+-- 2) 创建更新时间索引(加速增量同步)
+CREATE INDEX IF NOT EXISTS idx_${t}_updated_at ON public.${t}(updated_at DESC);
+
+-- 3) 启用行级安全
+ALTER TABLE public.${t} ENABLE ROW LEVEL SECURITY;
+
+-- 4) 删除旧策略(若存在)再创建,确保策略最新
+DROP POLICY IF EXISTS "anon_select_${t}" ON public.${t};
+DROP POLICY IF EXISTS "anon_insert_${t}" ON public.${t};
+DROP POLICY IF EXISTS "anon_update_${t}" ON public.${t};
+DROP POLICY IF EXISTS "anon_delete_${t}" ON public.${t};
+DROP POLICY IF EXISTS "anon_all_${t}" ON public.${t};
+DROP POLICY IF EXISTS "anon_all" ON public.${t};
+
+-- 5) 创建宽松的全访问策略(适合店铺内部使用,匿名 key 即可读写)
+CREATE POLICY "anon_all_${t}" ON public.${t}
+  AS PERMISSIVE
+  FOR ALL
+  TO anon, authenticated
+  USING (true)
+  WITH CHECK (true);
+
+-- 6) 授予权限给匿名/已登录用户
+GRANT ALL ON public.${t} TO anon;
+GRANT ALL ON public.${t} TO authenticated;
+GRANT ALL ON public.${t} TO service_role;
+
+-- 7) 自动维护 updated_at 字段(写入时自动更新)
+CREATE OR REPLACE FUNCTION public.fn_${t}_set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_${t}_updated_at ON public.${t};
+CREATE TRIGGER trg_${t}_updated_at
+  BEFORE UPDATE ON public.${t}
+  FOR EACH ROW
+  EXECUTE FUNCTION public.fn_${t}_set_updated_at();
+`
     ).join('\n\n');
+    
+    const footer=`
+
+-- =============================================================
+-- 完成!回到云锦长安系统点【🔬 一键全链路诊断】验证
+-- 应该看到 9 张表全部 ✓ 通过
+-- =============================================================`;
+    
+    return header+tableSqls+footer;
   }
 };
 
@@ -1888,7 +2193,8 @@ const Router = {
       logs:()=>LogModule.refresh(),
       rank:()=>RankModule.refresh(),
       totalsalary:()=>TotalSalaryModule.refresh(),
-      cloud:()=>CloudModule.refresh()
+      cloud:()=>CloudModule.refresh(),
+      cs:()=>CustomerServiceModule.refresh()
     };
     hooks[page]&&hooks[page]();
   }
@@ -1908,12 +2214,13 @@ const HomeModule = {
       $('#topRole').textContent=(LEVELS[u.level]||{}).name||(u.role==='admin'?'店长':'员工');
     }catch(e){console.warn('[Home] 顶部信息渲染失败',e)}
 
-    let perfAll=[],attAll=[],leavesAll=[],summariesAll=[];
+    let perfAll=[],attAll=[],leavesAll=[],summariesAll=[],csReportsAll=[];
     try{
       perfAll=await DataStore.all('performance');
       attAll =await DataStore.all('attendance');
       leavesAll=await DataStore.all('leaves');
       summariesAll=await DataStore.all('summaries');
+      csReportsAll=await DataStore.all('cs_reports');
     }catch(e){console.error('[Home] 数据加载失败',e)}
 
     const month=currentMonth();
@@ -1930,7 +2237,8 @@ const HomeModule = {
         let salaryErrors=0;
         const monthSalaryTotal=users.reduce((s,emp)=>{
           try{
-            const sal=Calc.calcMonthSalary(emp,perfAll,attAll,leavesAll,month,summariesAll);
+            const empWithCs={...emp,_csReports:csReportsAll.filter(r=>r.userId===emp.id && isSameMonth(r.bookingDate,month))};
+            const sal=Calc.calcMonthSalary(empWithCs,perfAll,attAll,leavesAll,month,summariesAll);
             return s+(Number(sal.net)||0);
           }catch(e){
             console.error('[Home] 计算 '+emp.name+' 薪酬失败:',e);
@@ -1950,7 +2258,7 @@ const HomeModule = {
           <div class="stat-card">
             <div class="stat-card-label">今日全店业绩</div>
             <div class="stat-card-value">${fmtMoney(todayPerfTotal)}</div>
-            <div class="stat-card-extra">已接待 ${todayCount} 位客人</div>
+            <div class="stat-card-extra">已接待 ${todayCount.toFixed(1).replace(/\.0$/,'')} 单(每单 = 妆 0.5 + 头 0.5)</div>
           </div>
           <div class="stat-card">
             <div class="stat-card-label">本月全店业绩</div>
@@ -1988,7 +2296,10 @@ const HomeModule = {
         const ratio=level.target?(monthPerf/level.target*100).toFixed(1):'-';
 
         let salary={net:0};
-        try{salary=Calc.calcMonthSalary(u,perfAll,attAll,leavesAll,month,summariesAll)}
+        try{
+          const uWithCs={...u,_csReports:csReportsAll.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+          salary=Calc.calcMonthSalary(uWithCs,perfAll,attAll,leavesAll,month,summariesAll)
+        }
         catch(e){console.warn('[Home] 个人薪酬计算失败',e)}
 
         const targetText=level.target?`完成率 <span class="${monthPerf>=level.target?'up':'down'}">${ratio}%</span> · 目标 ${fmtMoney(level.target)}`:'实习生 · 不设业绩目标';
@@ -1997,7 +2308,7 @@ const HomeModule = {
           <div class="stat-card">
             <div class="stat-card-label">今日业绩</div>
             <div class="stat-card-value">${fmtMoney(todayPerf)}</div>
-            <div class="stat-card-extra">已接待 ${myPerf.filter(r=>r.date===td).reduce((s,r)=>s+(r.items||[]).reduce((x,i)=>x+(i.count||0),0),0)} 位客人</div>
+            <div class="stat-card-extra">已接待 ${myPerf.filter(r=>r.date===td).reduce((s,r)=>s+(r.items||[]).reduce((x,i)=>x+(i.count||0),0),0).toFixed(1).replace(/\.0$/,'')} 单(每单 = 妆 0.5 + 头 0.5)</div>
           </div>
           <div class="stat-card">
             <div class="stat-card-label">本月业绩</div>
@@ -2022,18 +2333,36 @@ const HomeModule = {
 
     // 功能网格
     const isIntern=u.level==='intern';
-    const features = [
-      {icon:'🕘',name:'签到打卡',desc:'迟到/加班',page:'signin'},
-      {icon:'💼',name:'业绩录入',desc:'快速计数',page:'perf'},
-      {icon:'📊',name:'业绩明细',desc:'查询统计',page:'perflist'},
-      {icon:'📝',name:'请假申请',desc:'事/病/调休',page:'leave'},
-      {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
-      {icon:'💰',name:'薪酬明细',desc:isIntern?'补助/加班/好评':'实时计算',page:'salary'},
-      {icon:'✨',name:'灵感记录',desc:'妆造/搭配',page:'inspiration'},
-      {icon:'📚',name:'妆发学习',desc:'课程教程',page:'learning'},
-      {icon:'👤',name:'我的',desc:'资料/改密',page:'profile'}
-    ];
+    const isCustomer=u.level==='customer';
+    let features;
+    
+    if(isCustomer){
+      // 线上客服:专属功能
+      features = [
+        {icon:'🕘',name:'签到打卡',desc:'迟到/加班',page:'signin'},
+        {icon:'📞',name:'客资管理',desc:'预约/排单/转化',page:'cs'},
+        {icon:'📝',name:'请假申请',desc:'事/病/调休',page:'leave'},
+        {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
+        {icon:'💰',name:'薪酬明细',desc:'纯提成',page:'salary'},
+        {icon:'📚',name:'妆发学习',desc:'课程教程',page:'learning'},
+        {icon:'👤',name:'我的',desc:'资料/改密',page:'profile'}
+      ];
+    } else {
+      features = [
+        {icon:'🕘',name:'签到打卡',desc:'迟到/加班',page:'signin'},
+        {icon:'💼',name:'业绩录入',desc:'快速计数',page:'perf'},
+        {icon:'📊',name:'业绩明细',desc:'查询统计',page:'perflist'},
+        {icon:'📝',name:'请假申请',desc:'事/病/调休',page:'leave'},
+        {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
+        {icon:'💰',name:'薪酬明细',desc:isIntern?'补助/加班/好评':'实时计算',page:'salary'},
+        {icon:'✨',name:'灵感记录',desc:'妆造/搭配',page:'inspiration'},
+        {icon:'📚',name:'妆发学习',desc:'课程教程',page:'learning'},
+        {icon:'👤',name:'我的',desc:'资料/改密',page:'profile'}
+      ];
+    }
+    
     if(u.role==='admin'){
+      features.push({icon:'📞',name:'客资管理',desc:'查看全部',page:'cs'});
       features.push({icon:'👥',name:'账号管理',desc:'员工账号',page:'users'});
       features.push({icon:'📈',name:'全员汇总',desc:'排行导出',page:'overall'});
       features.push({icon:'💵',name:'全员薪资',desc:'总和/明细',page:'totalsalary'});
@@ -2041,7 +2370,7 @@ const HomeModule = {
       features.push({icon:'📋',name:'操作日志',desc:'操作留痕',page:'logs'});
     }
     // 所有人都能看排行榜
-    features.splice(8,0,{icon:'🏆',name:'排行榜',desc:'全员排名',page:'rank'});
+    features.splice(isCustomer?6:8,0,{icon:'🏆',name:'排行榜',desc:'全员排名',page:'rank'});
     $('#featureGrid').innerHTML=features.map(f=>`
       <div class="feature-card" data-page="${f.page}">
         <div class="feature-icon">${f.icon}</div>
@@ -2298,21 +2627,25 @@ const PerfModule = {
   changeCustomCount(idx,delta){
     const r=this.state.customRows[idx];
     if(!r)return;
-    r.count=Math.max(0,(r.count||0)+delta);
+    r.count=Math.max(0,Math.round(((r.count||0)+delta)*10)/10);
     this.renderCustomRows();
     this.updateSummary();
   },
 
   changeCount(key,delta){
     const v=this.state.items[key]=this.state.items[key]||{count:0,images:[]};
-    v.count=Math.max(0,(v.count||0)+delta);
+    // 0.5 步进:一个妆 / 一个头各算 0.5
+    v.count=Math.max(0,Math.round(((v.count||0)+delta)*10)/10);
     this.renderItems();
     this.updateSummary();
   },
 
   setCount(key,v){
     const item=this.state.items[key]=this.state.items[key]||{count:0,images:[]};
-    item.count=Math.max(0,parseInt(v)||0);
+    // 支持小数,但保留 1 位小数(0.5 / 1.5 / 2 等)
+    let n=parseFloat(v);
+    if(isNaN(n))n=0;
+    item.count=Math.max(0,Math.round(n*10)/10);
     this.updateSummary();
   },
 
@@ -2486,6 +2819,7 @@ const PerfModule = {
       userName:Auth.current.name,
       date:$('#perfDate').value||today(),
       items,
+      customerSource:$('#perfSource')?.value||'其他',
       reviews:this.state.reviews.map(r=>({
         platforms:r.platforms||[],
         note:r.note||'',
@@ -3146,7 +3480,42 @@ const SalaryModule = {
     const att=await DataStore.all('attendance');
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
-    const s=Calc.calcMonthSalary(u,perf,att,leaves,currentMonth(),summaries);
+    const csReports=await DataStore.all('cs_reports');
+    const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,currentMonth()))};
+    const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,currentMonth(),summaries);
+
+    // 客服独立展示(纯提成)
+    if(s.kind==='customer'){
+      $('#salaryContent').innerHTML=`
+        <div class="salary-hero">
+          <div style="position:relative;z-index:1">
+            <div class="salary-hero-label">${currentMonth()} 预估薪资(纯提成)</div>
+            <div class="salary-hero-value">${fmtMoney(s.net)}</div>
+            <div class="salary-hero-sub">${s.level.name} · 转化率 ${s.conversionRate}% · 已成交 ${s.dealCsCount}/${s.totalCsCount}</div>
+          </div>
+        </div>
+        <div class="salary-section">
+          <div class="salary-section-title"><span>① 摄影组提成</span><span class="salary-section-value">${fmtMoney(s.photoCommission)}</span></div>
+          <div class="salary-section-body">
+            <div class="salary-line"><span>已成交 ${s.photoGroups} 组(妆造+摄影)× ¥${PHOTO_COMMISSION}</span><strong>${fmtMoney(s.photoCommission)}</strong></div>
+          </div>
+        </div>
+        <div class="salary-section">
+          <div class="salary-section-title"><span>② 妆造组提成</span><span class="salary-section-value">${fmtMoney(s.makeupCommission)}</span></div>
+          <div class="salary-section-body">
+            <div class="salary-line"><span>已成交 ${s.makeupGroups} 组(纯妆造)× ¥${MAKEUP_COMMISSION}</span><strong>${fmtMoney(s.makeupCommission)}</strong></div>
+          </div>
+        </div>
+        <div class="card" style="background:linear-gradient(135deg,var(--c-cream),var(--c-paper))">
+          <div style="text-align:center">
+            <div style="font-size:13px;color:var(--c-muted)">实发薪资</div>
+            <div style="font-family:var(--font-num);font-size:32px;font-weight:700;color:var(--c-primary)">${fmtMoney(s.net)}</div>
+            <div style="font-size:12px;color:var(--c-muted);margin-top:8px;line-height:1.7">客服说明:纯提成,无底薪/全勤/扣款。<br>每成交 1 单妆造 ¥${MAKEUP_COMMISSION},每成交 1 单妆造+摄影 ¥${PHOTO_COMMISSION}。<br>仅状态为"已成交"的客资计入提成。</div>
+          </div>
+        </div>
+      `;
+      return;
+    }
 
     // 实习生独立简化展示
     if(s.kind==='intern'){
@@ -3303,13 +3672,17 @@ const SalaryModule = {
     const att=await DataStore.all('attendance');
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
+    const csReports=await DataStore.all('cs_reports');
     
     if(users.length===0){
       $('#adminSalaryQuickView').innerHTML='<div style="color:var(--c-muted);padding:20px 0;text-align:center">暂无在职员工</div>';
       return;
     }
     
-    const rows=users.map(u=>Calc.calcMonthSalary(u,perf,att,leaves,month,summaries));
+    const rows=users.map(u=>{
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
+    });
     const totalNet=rows.reduce((s,r)=>s+r.net,0);
     const totalPerf=rows.reduce((s,r)=>s+r.totalPerf,0);
     const totalGross=rows.reduce((s,r)=>s+r.gross,0);
@@ -3398,6 +3771,7 @@ const UserModule = {
           <option value="junior">初级化妆师(底薪+岗位500+基准1.5万)</option>
           <option value="middle" selected>中级化妆师(底薪+岗位800+基准2.5万)</option>
           <option value="senior">高级化妆师(底薪+岗位1200+基准3.5万)</option>
+          <option value="customer">线上客服(底薪1500+摄影¥20/组+妆造¥15/组)</option>
         </select></div>
       <div class="form-item" style="margin-top:10px"><label class="form-label">初始密码</label>
         <input class="form-input" id="nuPass" value="123456">
@@ -3423,29 +3797,106 @@ const UserModule = {
 
   async resetPwd(id){
     const u=await DataStore.get('users',id);
-    if(!u)return;
-    if(!confirm(`确认将 ${u.name} 的密码重置为 123456?`))return;
-    u.password='123456';
-    await DataStore.put('users',u);
-    Logger.log('reset_pwd',`重置 ${u.name} 密码`);
-    Toast.success(`${u.name} 密码已重置为 123456`);
+    if(!u){Toast.error('找不到此用户');return}
+    Modal.open('🔑 重置密码',`
+      <div style="line-height:1.85">
+        <div style="padding:14px;background:#FFF3CD;border-radius:6px;margin-bottom:12px">
+          即将将 <strong>${escapeHtml(u.name)}</strong>(账号 <code>${escapeHtml(u.username)}</code>)的密码重置为:
+          <div style="text-align:center;font-family:monospace;font-size:20px;font-weight:bold;color:var(--c-primary);margin-top:8px;padding:10px;background:#fff;border-radius:6px">123456</div>
+        </div>
+        <div style="font-size:13px;color:var(--c-muted);line-height:1.7">
+          • 重置后请通知该员工首次登录后立即修改密码<br>
+          • 操作会被记录在日志中<br>
+          • 同步到云端后所有设备生效
+        </div>
+        <div style="margin-top:14px"><label class="form-label">可自定义新密码(选填,不填则用 123456)</label>
+          <input class="form-input" id="newPwd" placeholder="留空使用 123456" autocomplete="new-password">
+        </div>
+      </div>
+    `,async()=>{
+      try{
+        const customPwd=$('#newPwd')?.value.trim()||'123456';
+        if(customPwd.length<4){Toast.error('密码至少 4 位');return false}
+        u.password=customPwd;
+        u.passwordResetAt=Date.now();
+        await DataStore.put('users',u);
+        Logger.log('reset_pwd',`重置 ${u.name} 密码${customPwd!=='123456'?'(自定义)':''}`);
+        // 云同步状态提示
+        const cloudHint = CloudSync.enabled
+          ? (CloudSync.status==='online' ? ',云端已同步' : ',云端将稍后自动同步')
+          : '';
+        Toast.success(`✅ ${u.name} 密码已重置为 ${customPwd}${cloudHint}`);
+        this.refresh();
+      }catch(e){
+        Toast.error('重置失败:'+e.message);
+        console.error('[ResetPwd]',e);
+        return false;
+      }
+    });
   },
 
   async toggle(id){
     const u=await DataStore.get('users',id);
-    if(!u)return;
+    if(!u){Toast.error('找不到此用户');return}
+    
     if(u.active){
-      if(!confirm(`确认为 ${u.name} 办理离职?\n\n• 该账号将无法登录\n• 历史业绩、考勤、薪酬等数据全部保留\n• 后续可随时点【恢复在职】重新启用`))return;
-      u.active=false;
-      Logger.log('deactivate',`办理 ${u.name} 离职`);
-      Toast.success(`已为 ${u.name} 办理离职,数据已保留`);
+      // 办理离职
+      Modal.open('⚠️ 办理离职',`
+        <div style="line-height:1.85">
+          <div style="padding:14px;background:#FFE4E1;border-radius:8px;margin-bottom:12px">
+            <div style="font-weight:600;color:var(--c-danger);margin-bottom:6px">即将办理以下员工离职</div>
+          </div>
+          <div class="salary-line"><span>姓名</span><strong>${escapeHtml(u.name)}</strong></div>
+          <div class="salary-line"><span>账号</span><strong style="font-family:monospace">${escapeHtml(u.username)}</strong></div>
+          <div class="salary-line"><span>岗位</span><strong>${escapeHtml((LEVELS[u.level]||{}).name||'-')}</strong></div>
+          <div style="margin-top:14px;padding:10px;background:var(--c-cream);border-radius:6px;font-size:13px;line-height:1.7">
+            ✅ 该账号将无法登录<br>
+            ✅ 历史业绩、考勤、薪酬、好评、作品等<strong>全部保留</strong>不删除<br>
+            ✅ 后续可随时点【恢复在职】重新启用<br>
+            ✅ 同步到云端后,该员工在所有设备都无法登录
+          </div>
+        </div>
+      `,async()=>{
+        try{
+          u.active=false;
+          u.deactivatedAt=Date.now();
+          await DataStore.put('users',u);
+          Logger.log('deactivate',`办理 ${u.name} 离职`);
+          Toast.success(`✅ 已为 ${u.name} 办理离职,数据已保留`);
+          this.refresh();
+        }catch(e){
+          Toast.error('操作失败:'+e.message);
+          console.error('[Deactivate]',e);
+          return false;
+        }
+      });
     }else{
-      u.active=true;
-      Logger.log('activate',`恢复 ${u.name} 在职`);
-      Toast.success(`${u.name} 已恢复在职`);
+      // 恢复在职
+      Modal.open('✨ 恢复在职',`
+        <div style="line-height:1.85">
+          <div style="padding:14px;background:#D4EDDA;border-radius:8px;margin-bottom:12px">
+            将恢复 <strong>${escapeHtml(u.name)}</strong>(<code>${escapeHtml(u.username)}</code>)的账号
+          </div>
+          <div style="font-size:13px;color:var(--c-muted);line-height:1.7">
+            • 该员工可以重新登录系统<br>
+            • 历史数据完整保留<br>
+            • 默认密码不变,如忘记请用【🔑 重置密码】
+          </div>
+        </div>
+      `,async()=>{
+        try{
+          u.active=true;
+          u.reactivatedAt=Date.now();
+          await DataStore.put('users',u);
+          Logger.log('activate',`恢复 ${u.name} 在职`);
+          Toast.success(`✅ ${u.name} 已恢复在职`);
+          this.refresh();
+        }catch(e){
+          Toast.error('操作失败:'+e.message);
+          return false;
+        }
+      });
     }
-    await DataStore.put('users',u);
-    this.refresh();
   }
 };
 
@@ -4299,6 +4750,577 @@ const AICoach = {
   }
 };
 
+/* ============ 线上客服报备模块 ============ */
+
+/* ============ CustomerServiceModule 线上客服 · 客资管理系统 ============ */
+const CustomerServiceModule = {
+  curView: 'today',  // today | calendar | list | analytics
+
+  async refresh(){
+    const u=Auth.current;
+    if(!u)return;
+    const isCustomerRole=(LEVELS[u.level]||{}).type==='customer';
+    const isAdmin=u.role==='admin';
+    
+    if(!isCustomerRole && !isAdmin){
+      $('#csContent').innerHTML='<div class="card"><div style="text-align:center;padding:30px;color:var(--c-muted)">本页仅线上客服与店长可见</div></div>';
+      return;
+    }
+
+    const all=await DataStore.all('cs_reports');
+    const myAll=isAdmin?all:all.filter(r=>r.userId===u.id);
+    const td=today();
+    const month=currentMonth();
+
+    // 顶部 4 个统计卡片
+    // 转化率分母:排除"取消"(主动放弃的不算客资)
+    const todayList=myAll.filter(r=>r.bookingDate===td && r.status!=='cancel');
+    const todayDeal=todayList.filter(r=>r.status==='deal');
+    const todayConvRate=todayList.length?Math.round(todayDeal.length/todayList.length*1000)/10:0;
+    const todayCommission=todayDeal.reduce((s,r)=>s+(r.withPhoto?PHOTO_COMMISSION:MAKEUP_COMMISSION),0);
+    
+    const monthList=myAll.filter(r=>isSameMonth(r.bookingDate,month) && r.status!=='cancel');
+    const monthDeal=monthList.filter(r=>r.status==='deal');
+    const monthConvRate=monthList.length?Math.round(monthDeal.length/monthList.length*1000)/10:0;
+    const monthCommission=monthDeal.reduce((s,r)=>s+(r.withPhoto?PHOTO_COMMISSION:MAKEUP_COMMISSION),0);
+    
+    // 未来未排单(预约日期 > 今天且未取消未失败的)
+    const future=myAll.filter(r=>r.bookingDate && r.bookingDate>td && r.status!=='cancel' && r.status!=='noshow' && r.status!=='deal');
+
+    // 实时转化率反馈(给客服)
+    let aiTip='';
+    if(!isAdmin && todayList.length>=3){
+      if(todayConvRate>=70){
+        aiTip=`<div style="padding:14px;background:linear-gradient(135deg,#D4EDDA,#F0F9FF);border-radius:8px;border-left:4px solid #22c55e;margin-top:14px">
+          <div style="font-weight:600;color:#15803d">🌟 今日转化率 ${todayConvRate}%,非常棒!</div>
+          <div style="font-size:13px;color:var(--c-ink-2);margin-top:4px;line-height:1.7">您的服务话术很到位,继续保持。可以追一追未确认的客户,争取更高单数。</div>
+        </div>`;
+      }else if(todayConvRate<30){
+        aiTip=`<div style="padding:14px;background:linear-gradient(135deg,#FEE2E2,#FFF1F2);border-radius:8px;border-left:4px solid #ef4444;margin-top:14px">
+          <div style="font-weight:600;color:#dc2626">⚠️ 今日转化率仅 ${todayConvRate}%,需要注意</div>
+          <div style="font-size:13px;color:var(--c-ink-2);margin-top:4px;line-height:1.7">
+            建议:① 主动联系未确认客户 ② 重点跟进意向客户 ③ 检查报价/方案是否清晰 ④ 留意客户提出的具体需求
+          </div>
+        </div>`;
+      }else{
+        aiTip=`<div style="padding:14px;background:linear-gradient(135deg,#FEF3C7,#FFFBEB);border-radius:8px;border-left:4px solid #f59e0b;margin-top:14px">
+          <div style="font-weight:600;color:#b45309">📊 今日转化率 ${todayConvRate}%</div>
+          <div style="font-size:13px;color:var(--c-ink-2);margin-top:4px;line-height:1.7">还有上升空间。建议追一追未确定客户,让他们先选档位、收预约金。</div>
+        </div>`;
+      }
+    }
+
+    // 视图切换
+    const tabs=[
+      {key:'today',name:`📅 今日(${todayList.length})`},
+      {key:'calendar',name:`📆 排单`},
+      {key:'list',name:`📋 客资列表(${myAll.length})`},
+      {key:'analytics',name:`📊 来源分析`}
+    ];
+    if(isAdmin)tabs.push({key:'team',name:`👥 团队`});
+    
+    $('#csContent').innerHTML=`
+      <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">📞 ${isAdmin?'客资管理(店长视图)':'我的客资管理'}</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px">
+          ${isAdmin?'查看全店客服跟进情况、来源分析、转化率':'每天接到的客户都记一笔,设好预约时间和电话,分类管理'}
+        </div>
+      </div>
+
+      <div class="overview-grid" style="margin-top:14px">
+        <div class="stat-card">
+          <div class="stat-card-label">今日客资</div>
+          <div class="stat-card-value">${todayList.length}</div>
+          <div class="stat-card-extra">已成交 ${todayDeal.length}</div>
+        </div>
+        <div class="stat-card" style="background:${todayConvRate>=70?'linear-gradient(135deg,#D4EDDA,#fff)':todayConvRate<30&&todayList.length>=3?'linear-gradient(135deg,#FEE2E2,#fff)':''}">
+          <div class="stat-card-label">今日转化率</div>
+          <div class="stat-card-value">${todayConvRate}%</div>
+          <div class="stat-card-extra">${todayList.length?(todayDeal.length+'/'+todayList.length):'暂无数据'}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">本月转化率</div>
+          <div class="stat-card-value">${monthConvRate}%</div>
+          <div class="stat-card-extra">${monthDeal.length}/${monthList.length}</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">${isAdmin?'本月提成总额':'本月我的提成'}</div>
+          <div class="stat-card-value">${fmtMoney(monthCommission)}</div>
+          <div class="stat-card-extra">未来 ${future.length} 单已预约</div>
+        </div>
+      </div>
+
+      ${aiTip}
+
+      <div class="card" style="margin-top:14px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+          ${tabs.map(t=>`<button class="btn btn-sm ${t.key===this.curView?'btn-primary':'btn-outline'}" data-action="cs-view" data-key="${t.key}">${t.name}</button>`).join('')}
+          <div style="flex:1"></div>
+          ${!isAdmin?`<button class="btn btn-primary" data-action="cs-add">+ 新增客资</button>`:''}
+        </div>
+        <div id="csViewBody"></div>
+      </div>
+    `;
+    
+    // 渲染当前视图
+    if(this.curView==='today')this._renderToday(myAll,isAdmin);
+    else if(this.curView==='calendar')this._renderCalendar(myAll,isAdmin);
+    else if(this.curView==='list')this._renderList(myAll,isAdmin);
+    else if(this.curView==='analytics')this._renderAnalytics(myAll);
+    else if(this.curView==='team')this._renderTeam(all);
+  },
+
+  switchView(key){this.curView=key; this.refresh()},
+
+  // 视图1:今日
+  _renderToday(all,isAdmin){
+    const td=today();
+    const list=all.filter(r=>r.bookingDate===td);
+    // 排序:未完成优先(待跟进/预约/到店),已成交/取消放后面;同状态按时间排
+    const stOrder={pending:1,followup:1,booked:2,direct:2,arrived:3,deal:5,noshow:6,cancel:7};
+    list.sort((a,b)=>{
+      const sa=stOrder[a.status]||1, sb=stOrder[b.status]||1;
+      if(sa!==sb)return sa-sb;
+      return (a.bookingTime||'').localeCompare(b.bookingTime||'');
+    });
+    if(list.length===0){
+      $('#csViewBody').innerHTML=`<div style="text-align:center;padding:30px;color:var(--c-muted)">
+        <div style="font-size:48px">📅</div>
+        <div style="margin-top:10px">今日还没有客资,加油!</div>
+      </div>`;
+      return;
+    }
+    $('#csViewBody').innerHTML=this._renderCards(list,isAdmin);
+  },
+
+  // 视图2:排单日历(未来 14 天)
+  _renderCalendar(all,isAdmin){
+    const days=[];
+    const start=new Date();
+    for(let i=0;i<14;i++){
+      const d=new Date(start);
+      d.setDate(d.getDate()+i);
+      const dateStr=d.toISOString().slice(0,10);
+      const list=all.filter(r=>r.bookingDate===dateStr && r.status!=='cancel')
+        .sort((a,b)=>(a.bookingTime||'').localeCompare(b.bookingTime||''));
+      days.push({date:dateStr,d,list});
+    }
+    
+    $('#csViewBody').innerHTML=`
+      <div style="font-size:13px;color:var(--c-muted);margin-bottom:10px">📆 未来 14 天预约一览(按日期分组)</div>
+      ${days.map(({date,d,list})=>{
+        const isToday=date===today();
+        const weekday=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
+        return `
+          <div style="margin-bottom:14px;padding:14px;background:${isToday?'linear-gradient(135deg,#FFF8DC,#fff)':'var(--c-cream)'};border-radius:8px;border-left:4px solid ${isToday?'var(--c-primary)':'var(--c-border)'}">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${list.length?'10px':'0'}">
+              <div style="font-weight:600;color:${isToday?'var(--c-primary)':'var(--c-ink)'}">${escapeHtml(date)} ${weekday}${isToday?' · 今日':''}</div>
+              <div style="font-size:13px;color:var(--c-muted)">${list.length} 单</div>
+            </div>
+            ${list.length===0?`<div style="font-size:13px;color:var(--c-muted)">暂无预约</div>`:list.map(r=>`
+              <div style="display:flex;align-items:center;gap:10px;padding:8px;background:#fff;border-radius:6px;margin-bottom:6px;cursor:pointer" data-action="cs-edit" data-id="${r.id}">
+                <div style="font-family:var(--font-num);font-weight:600;color:var(--c-primary);min-width:50px">${escapeHtml(r.bookingTime||'--:--')}</div>
+                <div style="flex:1">
+                  <div>${r.starred?'⭐':''}${r.flagged?'⚠️':''} ${escapeHtml(r.customerName||'(未填)')}${(r.women||r.men||r.girls||r.boys)?` <span style="font-size:11px;color:var(--c-muted)">(${[r.women?'女'+r.women:'',r.men?'男'+r.men:'',r.girls?'女童'+r.girls:'',r.boys?'男童'+r.boys:''].filter(Boolean).join(' ')})</span>`:''}</div>
+                  <div style="font-size:12px;color:var(--c-muted)">${escapeHtml(r.source||'')} · ${r.withPhoto?'妆+摄':'妆造'} · ${escapeHtml(r.phone||'无电话')}</div>
+                </div>
+                <div>${this._statusBadge(r.status)}</div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }).join('')}
+    `;
+  },
+
+  // 视图3:全部客资列表
+  _renderList(all,isAdmin){
+    const sorted=[...all].sort((a,b)=>{
+      const aTime=(a.bookingDate||'')+(a.bookingTime||'');
+      const bTime=(b.bookingDate||'')+(b.bookingTime||'');
+      return bTime.localeCompare(aTime);
+    });
+    if(sorted.length===0){
+      $('#csViewBody').innerHTML='<div style="text-align:center;padding:30px;color:var(--c-muted)">暂无客资</div>';
+      return;
+    }
+    $('#csViewBody').innerHTML=`
+      <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--c-muted)">
+        <span>共 ${sorted.length} 条</span> · 
+        <span>⭐ ${sorted.filter(r=>r.starred).length} 重点</span> · 
+        <span>⚠️ ${sorted.filter(r=>r.flagged).length} 需注意</span>
+      </div>
+      ${this._renderCards(sorted.slice(0,50),isAdmin)}
+      ${sorted.length>50?`<div style="text-align:center;color:var(--c-muted);padding:14px;font-size:13px">显示最近 50 条</div>`:''}
+    `;
+  },
+
+  // 视图4:来源分析
+  _renderAnalytics(all){
+    const month=currentMonth();
+    const mList=all.filter(r=>isSameMonth(r.bookingDate,month));
+    const mDeal=mList.filter(r=>r.status==='deal');
+    
+    const sourceStats={};
+    CUSTOMER_SOURCES.forEach(s=>sourceStats[s]={total:0,deal:0,commission:0});
+    mList.forEach(r=>{
+      const src=r.source||'其他';
+      const k=sourceStats[src]?src:'其他';
+      sourceStats[k].total++;
+      if(r.status==='deal'){
+        sourceStats[k].deal++;
+        sourceStats[k].commission+=(r.withPhoto?PHOTO_COMMISSION:MAKEUP_COMMISSION);
+      }
+    });
+    
+    if(mList.length===0){
+      $('#csViewBody').innerHTML='<div style="text-align:center;padding:30px;color:var(--c-muted)">本月还没有数据</div>';
+      return;
+    }
+    
+    // 找最佳/最差渠道
+    const stats=Object.entries(sourceStats).filter(([_,v])=>v.total>0);
+    const best=stats.length?stats.reduce((a,b)=>(a[1].deal/a[1].total)>(b[1].deal/b[1].total)?a:b):null;
+    const worst=stats.length?stats.reduce((a,b)=>(a[1].deal/a[1].total)<(b[1].deal/b[1].total)?a:b):null;
+    
+    $('#csViewBody').innerHTML=`
+      <div style="font-size:13px;color:var(--c-muted);margin-bottom:14px">${month} 各渠道转化情况</div>
+      <table style="width:100%">
+        <thead><tr><th>渠道</th><th class="td-center">客资</th><th class="td-center">成交</th><th class="td-center">转化率</th><th class="td-money">提成</th></tr></thead>
+        <tbody>
+          ${CUSTOMER_SOURCES.map(s=>{
+            const v=sourceStats[s];
+            if(v.total===0)return '';
+            const cr=Math.round(v.deal/v.total*1000)/10;
+            const crColor=cr>=50?'var(--c-success)':cr>=25?'var(--c-gold-dark)':'var(--c-danger)';
+            return `<tr>
+              <td>${escapeHtml(s)}</td>
+              <td class="td-center">${v.total}</td>
+              <td class="td-center">${v.deal}</td>
+              <td class="td-center"><span style="color:${crColor};font-weight:600">${cr}%</span></td>
+              <td class="td-money">${fmtMoney(v.commission)}</td>
+            </tr>`;
+          }).filter(Boolean).join('')}
+        </tbody>
+      </table>
+      ${best?`<div style="margin-top:14px;padding:12px;background:linear-gradient(135deg,#D4EDDA,#fff);border-radius:8px">
+        <div style="font-weight:600;color:#15803d">🏆 最佳渠道:${escapeHtml(best[0])}</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:4px">转化率 ${Math.round(best[1].deal/best[1].total*1000)/10}% · 建议持续投入</div>
+      </div>`:''}
+      ${worst && stats.length>=2?`<div style="margin-top:10px;padding:12px;background:linear-gradient(135deg,#FEF3C7,#fff);border-radius:8px">
+        <div style="font-weight:600;color:#b45309">📉 最弱渠道:${escapeHtml(worst[0])}</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:4px">转化率 ${Math.round(worst[1].deal/worst[1].total*1000)/10}% · 考虑优化或减少投入</div>
+      </div>`:''}
+    `;
+  },
+
+  // 视图5(店长):团队
+  async _renderTeam(allReports){
+    const users=(await DataStore.all('users')).filter(u=>u.active && (LEVELS[u.level]||{}).type==='customer');
+    const month=currentMonth();
+    if(users.length===0){
+      $('#csViewBody').innerHTML='<div style="text-align:center;padding:30px;color:var(--c-muted)">还没有客服员工。<br>到【账号管理】新建账号,岗位选"线上客服"</div>';
+      return;
+    }
+    const stats=users.map(u=>{
+      const my=allReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month));
+      const deal=my.filter(r=>r.status==='deal');
+      const cr=my.length?Math.round(deal.length/my.length*1000)/10:0;
+      const com=deal.reduce((s,r)=>s+(r.withPhoto?PHOTO_COMMISSION:MAKEUP_COMMISSION),0);
+      return {user:u, total:my.length, deal:deal.length, cr, commission:com};
+    }).sort((a,b)=>b.commission-a.commission);
+    
+    $('#csViewBody').innerHTML=`
+      <table style="width:100%">
+        <thead><tr><th>客服</th><th class="td-center">客资</th><th class="td-center">成交</th><th class="td-center">转化率</th><th class="td-money">本月提成</th></tr></thead>
+        <tbody>
+          ${stats.map((s,i)=>`<tr style="${i===0?'background:linear-gradient(90deg,#FFF8DC,transparent)':''}">
+            <td>${i===0?'🏆 ':''}${escapeHtml(s.user.name)}</td>
+            <td class="td-center">${s.total}</td>
+            <td class="td-center">${s.deal}</td>
+            <td class="td-center">${s.cr}%</td>
+            <td class="td-money">${fmtMoney(s.commission)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  },
+
+  // 客资卡片
+  _renderCards(list,isAdmin){
+    return list.map(r=>{
+      const stars=r.starred?'⭐':'';
+      const flag=r.flagged?'⚠️':'';
+      const reviewMark=r.needReview?'🌟要好评':'';
+      
+      // 人数显示
+      const peopleParts=[];
+      if(r.women)peopleParts.push(`女${r.women}`);
+      if(r.men)peopleParts.push(`男${r.men}`);
+      if(r.girls)peopleParts.push(`女童${r.girls}`);
+      if(r.boys)peopleParts.push(`男童${r.boys}`);
+      const peopleStr=peopleParts.length?'👥 '+peopleParts.join(' '):'';
+      const totalPeople=(r.women||0)+(r.men||0)+(r.girls||0)+(r.boys||0);
+      
+      // 根据当前状态决定可用快捷按钮
+      const status=r.status||'pending';
+      const actionBtns=[];
+      // 跟进 → 进入到 booked/direct
+      if(status==='pending'||status==='followup'){
+        actionBtns.push(`<button class="btn btn-sm btn-outline" data-action="cs-status" data-id="${r.id}" data-s="booked" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 8px">🔵 收定金</button>`);
+        actionBtns.push(`<button class="btn btn-sm btn-outline" data-action="cs-status" data-id="${r.id}" data-s="direct" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 8px">🌊 直接来</button>`);
+      }
+      // 已预约 → 到店 / 未到
+      if(status==='booked'||status==='direct'){
+        actionBtns.push(`<button class="btn btn-sm btn-primary" data-action="cs-status" data-id="${r.id}" data-s="arrived" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 10px">✓ 到店</button>`);
+        actionBtns.push(`<button class="btn btn-sm btn-outline" data-action="cs-status" data-id="${r.id}" data-s="noshow" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 8px;color:var(--c-danger)">❌ 没来</button>`);
+      }
+      // 已到店 → 成交
+      if(status==='arrived'){
+        actionBtns.push(`<button class="btn btn-sm btn-primary" data-action="cs-status" data-id="${r.id}" data-s="deal" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 10px;background:#15803d">🎉 成交</button>`);
+      }
+
+      return `
+        <div class="card" style="margin-bottom:10px;cursor:pointer;border-left:4px solid ${r.flagged?'#ef4444':r.starred?'#f59e0b':status==='deal'?'#22c55e':status==='arrived'?'#3b82f6':'var(--c-border)'}" data-action="cs-edit" data-id="${r.id}">
+          <div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:180px">
+              <div style="font-weight:600;font-size:15px">${stars}${flag}${escapeHtml(r.customerName||'(未填客户名)')}${totalPeople>0?` <span style="font-size:12px;color:var(--c-muted);font-weight:normal">(共${totalPeople}人)</span>`:''}</div>
+              <div style="font-size:13px;color:var(--c-muted);margin-top:4px;line-height:1.7">
+                📅 ${escapeHtml(r.bookingDate||'未定')} ${escapeHtml(r.bookingTime||'')}<br>
+                📞 ${escapeHtml(r.phone||'未填电话')}<br>
+                ${peopleStr?peopleStr+'<br>':''}
+                🌟 ${escapeHtml(r.source||'未知来源')} · ${r.withPhoto?'妆造+摄影 (¥20)':'纯妆造 (¥15)'}
+              </div>
+              ${r.notes?`<div style="font-size:12px;color:var(--c-ink-2);margin-top:6px;padding:6px 8px;background:var(--c-cream);border-radius:4px">${escapeHtml(r.notes)}</div>`:''}
+              ${reviewMark?`<div style="display:inline-block;font-size:12px;color:#b45309;margin-top:6px;padding:2px 8px;background:#FEF3C7;border-radius:4px">${reviewMark}</div>`:''}
+              ${isAdmin?`<div style="font-size:11px;color:var(--c-muted);margin-top:6px">👤 ${escapeHtml(r.userName||r.userId)}</div>`:''}
+            </div>
+            <div style="text-align:right">
+              ${this._statusBadge(status)}
+              ${actionBtns.length?`<div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${actionBtns.join('')}</div>`:''}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  },
+
+  _statusBadge(status){
+    const map={
+      pending:{txt:'待跟进',color:'#b45309',bg:'#FEF3C7'},
+      followup:{txt:'跟进中',color:'#7c3aed',bg:'#EDE9FE'},
+      booked:{txt:'定金预约',color:'#1e40af',bg:'#E0F2FE'},
+      direct:{txt:'直接来',color:'#0e7490',bg:'#CFFAFE'},
+      arrived:{txt:'✓ 已到店',color:'#15803d',bg:'#D1FAE5'},
+      deal:{txt:'🎉 已成交',color:'#15803d',bg:'#D4EDDA'},
+      noshow:{txt:'❌ 未到店',color:'#991b1b',bg:'#FEE2E2'},
+      cancel:{txt:'已取消',color:'#991b1b',bg:'#FEE2E2'}
+    };
+    const m=map[status]||map.pending;
+    return `<span style="display:inline-block;padding:3px 10px;background:${m.bg};color:${m.color};border-radius:12px;font-size:12px;font-weight:600">${m.txt}</span>`;
+  },
+
+  add(){this.openEditor(null)},
+
+  async edit(id){
+    const r=await DataStore.get('cs_reports',id);
+    if(!r){Toast.error('记录不存在');return}
+    this.openEditor(r);
+  },
+
+  openEditor(rec){
+    const isEdit=!!rec;
+    const r=rec||{
+      id:uuid(),customerName:'',phone:'',
+      bookingDate:today(),bookingTime:'',
+      source:CUSTOMER_SOURCES[0],
+      withPhoto:false,
+      // 人数:女士/男士/女童/男童
+      women:0, men:0, girls:0, boys:0,
+      // 预约方式 + 状态
+      bookingType:'定金预约',  // 定金预约 / 直接来 / 待跟进
+      status:'booked',         // booked / direct / pending / followup / arrived / deal / noshow / cancel
+      starred:false,flagged:false,needReview:false,
+      notes:'',
+      userId:Auth.current.id, userName:Auth.current.name,
+      createdAt:Date.now()
+    };
+    
+    Modal.open(isEdit?'✏️ 编辑客资':'+ 新增客资',`
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-item"><label class="form-label required">客户称呼</label>
+          <input class="form-input" id="csName" value="${escapeHtml(r.customerName||'')}" placeholder="如:张女士"></div>
+        <div class="form-item"><label class="form-label">电话</label>
+          <input class="form-input" id="csPhone" value="${escapeHtml(r.phone||'')}" placeholder="13812345678" inputmode="numeric"></div>
+      </div>
+
+      <div class="form-item" style="margin-top:10px">
+        <label class="form-label">👥 人数(分类填写)</label>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:10px;background:var(--c-cream);border-radius:6px">
+          <div>
+            <div style="font-size:12px;color:var(--c-muted);margin-bottom:4px">女士</div>
+            <input type="number" class="form-input" id="csWomen" value="${r.women||0}" min="0" max="50" style="text-align:center">
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--c-muted);margin-bottom:4px">男士</div>
+            <input type="number" class="form-input" id="csMen" value="${r.men||0}" min="0" max="50" style="text-align:center">
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--c-muted);margin-bottom:4px">女童</div>
+            <input type="number" class="form-input" id="csGirls" value="${r.girls||0}" min="0" max="50" style="text-align:center">
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--c-muted);margin-bottom:4px">男童</div>
+            <input type="number" class="form-input" id="csBoys" value="${r.boys||0}" min="0" max="50" style="text-align:center">
+          </div>
+        </div>
+      </div>
+      
+      <div class="form-row" style="display:grid;grid-template-columns:1.2fr 1fr;gap:10px;margin-top:10px">
+        <div class="form-item"><label class="form-label required">预约日期</label>
+          <input type="date" class="form-input" id="csDate" value="${r.bookingDate||today()}"></div>
+        <div class="form-item"><label class="form-label">预约时间</label>
+          <input type="time" class="form-input" id="csTime" value="${r.bookingTime||''}"></div>
+      </div>
+
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <div class="form-item"><label class="form-label required">客户来源</label>
+          <select class="form-select" id="csSource">
+            ${CUSTOMER_SOURCES.map(s=>`<option value="${s}" ${r.source===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label required">服务类型</label>
+          <select class="form-select" id="csWithPhoto">
+            <option value="0" ${!r.withPhoto?'selected':''}>纯妆造 (提成 ¥15)</option>
+            <option value="1" ${r.withPhoto?'selected':''}>妆造+摄影 (提成 ¥20)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-item" style="margin-top:14px">
+        <label class="form-label required">📋 预约方式 + 当前状态</label>
+        <div style="padding:12px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border-radius:6px;border:1px solid var(--c-gold)">
+          <select class="form-select" id="csStatus" style="margin-bottom:6px">
+            <optgroup label="🟡 跟进阶段">
+              <option value="pending" ${r.status==='pending'?'selected':''}>🟡 待跟进(刚有意向,还没确定)</option>
+              <option value="followup" ${r.status==='followup'?'selected':''}>🟣 跟进中(谈了几次,还在沟通)</option>
+            </optgroup>
+            <optgroup label="🔵 已确定要来">
+              <option value="booked" ${r.status==='booked'?'selected':''}>🔵 定金预约(已收预约金,确定来)</option>
+              <option value="direct" ${r.status==='direct'?'selected':''}>🌊 直接来(没收定金,口头约的)</option>
+            </optgroup>
+            <optgroup label="🟢 已经到了">
+              <option value="arrived" ${r.status==='arrived'?'selected':''}>✓ 已到店(人到了但还没成交)</option>
+              <option value="deal" ${r.status==='deal'?'selected':''}>🎉 已成交(到店并完成服务)</option>
+            </optgroup>
+            <optgroup label="🔴 失败">
+              <option value="noshow" ${r.status==='noshow'?'selected':''}>❌ 未到店(放鸽子)</option>
+              <option value="cancel" ${r.status==='cancel'?'selected':''}>⊗ 已取消</option>
+            </optgroup>
+          </select>
+          <div style="font-size:12px;color:var(--c-muted);line-height:1.6">
+            💡 流程:跟进 → 定金预约/直接来 → 到店 → 成交。<br>
+            状态会出现在"今日"和"排单"视图中,卡片上有快捷按钮一键流转。
+          </div>
+        </div>
+      </div>
+
+      <div class="form-item" style="margin-top:14px">
+        <label class="form-label">⭐ 标记(可多选)</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;padding:10px;background:var(--c-cream);border-radius:6px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="csStarred" ${r.starred?'checked':''}>
+            <span>⭐ 重点客户(高意向/VIP)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="csFlagged" ${r.flagged?'checked':''}>
+            <span>⚠️ 注意事项(过敏/特殊要求)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="csNeedReview" ${r.needReview?'checked':''}>
+            <span>🌟 要好评(需要引导)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-item" style="margin-top:10px">
+        <label class="form-label">备注(注意事项 / 客户偏好 / 跟进记录)</label>
+        <textarea class="form-textarea" id="csNotes" rows="3" placeholder="如:对桂花过敏 / 喜欢明制风 / 第二次到店,熟客 / 加微信送精修1张...">${escapeHtml(r.notes||'')}</textarea>
+      </div>
+    `,async()=>{
+      try{
+        const name=$('#csName').value.trim();
+        if(!name){Toast.error('请填写客户称呼');return false}
+        const data={
+          ...r,
+          customerName:name,
+          phone:$('#csPhone').value.trim(),
+          women:parseInt($('#csWomen').value)||0,
+          men:parseInt($('#csMen').value)||0,
+          girls:parseInt($('#csGirls').value)||0,
+          boys:parseInt($('#csBoys').value)||0,
+          bookingDate:$('#csDate').value,
+          bookingTime:$('#csTime').value,
+          source:$('#csSource').value,
+          withPhoto:$('#csWithPhoto').value==='1',
+          status:$('#csStatus').value,
+          starred:$('#csStarred').checked,
+          flagged:$('#csFlagged').checked,
+          needReview:$('#csNeedReview').checked,
+          notes:$('#csNotes').value.trim(),
+          updatedAt:Date.now()
+        };
+        await DataStore.put('cs_reports',data);
+        Logger.log(isEdit?'cs_edit':'cs_new',`${isEdit?'编辑':'新增'}客资 ${name} ${data.status}`);
+        Toast.success(`✅ ${isEdit?'已更新':'已保存'}`);
+        this.refresh();
+      }catch(e){
+        Toast.error('保存失败:'+e.message);
+        console.error('[CS]',e);return false;
+      }
+    });
+  },
+
+  // 一键状态流转(替代旧的 markDeal/markCancel)
+  async markStatus(id, newStatus){
+    const r=await DataStore.get('cs_reports',id);
+    if(!r){Toast.error('记录不存在');return}
+    const oldStatus=r.status;
+    r.status=newStatus;
+    r.updatedAt=Date.now();
+    
+    // 状态相关时间戳
+    if(newStatus==='arrived' && !r.arrivedAt)r.arrivedAt=Date.now();
+    if(newStatus==='deal' && !r.dealAt)r.dealAt=Date.now();
+    
+    await DataStore.put('cs_reports',r);
+    
+    // 状态对应的 toast 消息
+    const msgs={
+      booked:'🔵 已记录定金预约',
+      direct:'🌊 已记录直接来客户',
+      arrived:`✓ ${r.customerName} 已到店`,
+      deal:`🎉 ${r.customerName} 已成交!提成 ¥${r.withPhoto?PHOTO_COMMISSION:MAKEUP_COMMISSION}`,
+      noshow:`已标记 ${r.customerName} 未到店`,
+      cancel:`已标记 ${r.customerName} 取消`
+    };
+    Toast.success(msgs[newStatus]||'已更新状态');
+    Logger.log('cs_status',`${r.customerName} ${oldStatus}→${newStatus}`);
+    this.refresh();
+  },
+
+  // 兼容旧入口(防止其他地方仍在调用)
+  async markDeal(id){return this.markStatus(id,'deal')},
+  async markCancel(id){
+    const r=await DataStore.get('cs_reports',id);
+    if(!r)return;
+    Modal.open('确认取消?',`<div style="line-height:1.85;padding:8px 0">确认将 <strong>${escapeHtml(r.customerName)}</strong> 标记为已取消?<br><div style="color:var(--c-muted);font-size:13px;margin-top:8px">数据保留,只是不计入转化率分子</div></div>`,async()=>{
+      this.markStatus(id,'cancel');
+    });
+  }
+};
+
+
 /* ============ RankModule 全员排行榜 ============ */
 const RankModule = {
   curTab:'perf', // perf | attend | review
@@ -4429,8 +5451,12 @@ const TotalSalaryModule = {
     const att=await DataStore.all('attendance');
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
+    const csReports=await DataStore.all('cs_reports');
 
-    const rows=users.map(u=>Calc.calcMonthSalary(u,perf,att,leaves,month,summaries));
+    const rows=users.map(u=>{
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
+    });
 
     // 总和
     const totalNet=rows.reduce((s,r)=>s+r.net,0);
@@ -4569,9 +5595,25 @@ const CloudModule = {
 
       <div class="card">
         <div class="card-title">操作</div>
+        ${cfg?`<div style="margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#FFE4B5,#FFFAF0);border-radius:8px;border:2px solid var(--c-gold)">
+          <div style="font-weight:600;color:var(--c-primary);margin-bottom:6px">🔬 同步问题排查工具</div>
+          <div style="font-size:12px;color:var(--c-ink-2);margin-bottom:8px">如果同步失败,点这个按钮跑一遍完整诊断,会直接显示失败原因和解决方法</div>
+          <button class="btn btn-primary" data-action="cloud-diagnostic" style="width:100%">🔬 一键全链路诊断</button>
+        </div>`:''}
+        ${cfg?`<div style="margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#E0F2FE,#F0F9FF);border-radius:8px;border:2px solid #3b82f6">
+          <div style="font-weight:600;color:#1e40af;margin-bottom:6px">📲 多设备同步必读</div>
+          <div style="font-size:12px;color:var(--c-ink-2);margin-bottom:8px;line-height:1.7">
+            <strong>电脑/手机数据不一致?</strong> 因为每个设备都需要单独配置云端。<br>
+            点【📋 一键复制配置】→ 在另一台设备粘贴到【🔧 配置云端】即可,无需手动输入。
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" data-action="cloud-export-config" style="flex:1">📋 一键复制配置(给其他设备)</button>
+            <button class="btn btn-sm btn-outline" data-action="cloud-import-config" style="flex:1">📥 从其他设备导入配置</button>
+          </div>
+        </div>`:''}
         <div style="display:flex;flex-wrap:wrap;gap:8px">
           <button class="btn btn-primary" data-action="cloud-config">${cfg?'✏️ 修改云端配置':'🔧 配置云端'}</button>
-          ${cfg?`<button class="btn btn-outline" data-action="cloud-test">🔍 测试连接</button>`:''}
+          ${cfg?`<button class="btn btn-outline" data-action="cloud-test">🔍 测试 9 张表</button>`:''}
           ${cfg?`<button class="btn btn-outline" data-action="cloud-pull">⬇️ 立即拉取云端最新数据</button>`:''}
           ${cfg?`<button class="btn btn-outline" data-action="cloud-push">⬆️ 全量推送本地到云端(初次配置后必做)</button>`:''}
           ${queueLen>0?`<button class="btn btn-outline" data-action="cloud-flush" style="border-color:var(--c-gold);color:var(--c-gold-dark)">🔄 重试 ${queueLen} 条待同步</button>`:''}
@@ -4665,6 +5707,150 @@ const CloudModule = {
       this._showSyncError(r);
     }
     this.refresh();
+  },
+
+  // 全链路诊断:发起一次真实的写入测试,展示完整请求/响应
+  async runDiagnostic(){
+    const cfg=CloudSync.cfg;
+    if(!cfg){Toast.error('请先配置云端');return}
+    
+    Modal.open('🔬 全链路诊断进行中...',`
+      <div id="diagOutput" style="font-family:monospace;font-size:12px;line-height:1.7;max-height:60vh;overflow-y:auto;background:#1a1a1a;color:#0f0;padding:14px;border-radius:6px;white-space:pre-wrap;word-break:break-all"></div>
+    `,null);
+    
+    const out=$('#diagOutput');
+    if(!out)return;
+    const log=(msg,type)=>{
+      const colors={info:'#0f0',err:'#f55',ok:'#5f5',warn:'#fa0',title:'#ff0'};
+      const span=document.createElement('div');
+      span.style.color=colors[type||'info']||'#0f0';
+      span.textContent=msg;
+      out.appendChild(span);
+      out.scrollTop=out.scrollHeight;
+    };
+    
+    log('═══════════════════════════════════════','title');
+    log('  云锦长安 EMS · 云端全链路诊断','title');
+    log('═══════════════════════════════════════','title');
+    log('');
+    log('【1/6】检查配置...','title');
+    log('URL: '+cfg.url);
+    log('Key 前缀: '+cfg.anonKey.slice(0,15)+'...');
+    log('Key 长度: '+cfg.anonKey.length+' 字符');
+    const keyType=cfg.anonKey.startsWith('eyJ')?'JWT (legacy anon key) ✓':
+                  cfg.anonKey.startsWith('sb_publishable_')?'Publishable Key (new) ✓':
+                  '未知格式 ⚠';
+    log('Key 类型: '+keyType, keyType.includes('✓')?'ok':'warn');
+    log('');
+    
+    const headers={
+      'apikey':cfg.anonKey,
+      'Authorization':'Bearer '+cfg.anonKey,
+      'Content-Type':'application/json'
+    };
+    
+    // 测试 1: GET yj_users
+    log('【2/6】测试 yj_users 表 GET 请求...','title');
+    const url1=cfg.url+'/rest/v1/yj_users?limit=1';
+    log('GET '+url1);
+    let res;
+    try{
+      res=await fetch(url1,{method:'GET',headers});
+      log('响应: HTTP '+res.status+' '+res.statusText, res.ok?'ok':'err');
+      const body=await res.text();
+      log('响应体: '+body.slice(0,500), res.ok?'ok':'err');
+      if(!res.ok){
+        log('','err');
+        log('❌ 测试失败,请看上方原始错误','err');
+        if(res.status===401)log('→ 401 密钥错误。检查 Settings → API 中复制的是否正确','warn');
+        if(res.status===404)log('→ 404 表不存在。点【📋 查看建表 SQL】重新执行','warn');
+        if(res.status===403)log('→ 403 权限阻止。重新执行建表 SQL(包含 RLS policy)','warn');
+        return;
+      }
+    }catch(e){
+      log('❌ 网络错误: '+e.message,'err');
+      log('→ 检查 URL 和网络','warn');
+      return;
+    }
+    log('');
+    
+    // 测试 2: 全部 9 张表
+    log('【3/6】检查全部 9 张表...','title');
+    const missing=[];
+    for(const [store,table] of Object.entries(CloudSync.STORE_TABLE_MAP)){
+      try{
+        const r2=await fetch(cfg.url+'/rest/v1/'+table+'?limit=1',{method:'GET',headers});
+        if(r2.ok){log('  ✓ '+table,'ok')}
+        else{log('  ✗ '+table+' (HTTP '+r2.status+')','err');missing.push(table)}
+      }catch(e){
+        log('  ✗ '+table+' ('+e.message+')','err');missing.push(table);
+      }
+    }
+    if(missing.length>0){
+      log('','err');
+      log('❌ 缺失 '+missing.length+' 张表,重新执行建表 SQL','err');
+      return;
+    }
+    log('');
+    
+    // 测试 3: POST upsert
+    log('【4/6】测试写入(POST upsert)...','title');
+    const testRow={
+      id:'__diag_test__',
+      payload:{id:'__diag_test__',test:true,timestamp:Date.now()},
+      updated_at:new Date().toISOString(),
+      ver:3
+    };
+    const postUrl=cfg.url+'/rest/v1/yj_users?on_conflict=id';
+    log('POST '+postUrl);
+    log('Prefer: resolution=merge-duplicates,return=minimal');
+    log('Body: '+JSON.stringify([testRow]));
+    try{
+      res=await fetch(postUrl,{
+        method:'POST',
+        headers:Object.assign({},headers,{'Prefer':'resolution=merge-duplicates,return=minimal'}),
+        body:JSON.stringify([testRow])
+      });
+      log('响应: HTTP '+res.status+' '+res.statusText, res.ok?'ok':'err');
+      const body=await res.text();
+      log('响应体: '+(body.slice(0,300)||'(空,return=minimal 正常)'), res.ok?'ok':'err');
+      if(!res.ok){
+        log('','err');
+        log('❌ 写入失败 = 同步失败的根因','err');
+        if(res.status===409)log('→ 409 主键冲突。upsert 模式可能没开启,检查 SQL 是否最新版','warn');
+        if(res.status===400)log('→ 400 数据格式错误,检查 payload 字段类型','warn');
+        if(res.status===403)log('→ 403 RLS 阻止写入。重新执行建表 SQL','warn');
+        if(res.status===413)log('→ 413 数据过大','warn');
+        return;
+      }
+    }catch(e){
+      log('❌ 网络错误: '+e.message,'err');
+      return;
+    }
+    log('');
+    
+    // 测试 4: 验证写入
+    log('【5/6】验证写入(GET刚写的记录)...','title');
+    try{
+      res=await fetch(cfg.url+'/rest/v1/yj_users?id=eq.__diag_test__',{method:'GET',headers});
+      const body=await res.text();
+      log('响应体: '+body.slice(0,300), res.ok?'ok':'err');
+      if(body.indexOf('__diag_test__')>=0)log('✓ 写入成功且能读回!','ok');
+    }catch(e){log('错误: '+e.message,'err')}
+    log('');
+    
+    // 测试 5: 清理
+    log('【6/6】清理测试数据...','title');
+    try{
+      res=await fetch(cfg.url+'/rest/v1/yj_users?id=eq.__diag_test__',{method:'DELETE',headers});
+      log('HTTP '+res.status+': '+(res.ok?'清理成功':'清理失败'), res.ok?'ok':'warn');
+    }catch(e){log('错误: '+e.message,'warn')}
+    
+    log('');
+    log('═══════════════════════════════════════','title');
+    log('  ✅ 全链路诊断完成,云端工作正常','ok');
+    log('  现在可以点【⬆️ 全量推送】上传所有数据','ok');
+    log('═══════════════════════════════════════','title');
   },
 
   async pull(){
@@ -4809,6 +5995,68 @@ const CloudModule = {
         ">全选复制</button>
       </div>
     `,null);
+  },
+
+  exportConfig(){
+    const cfg=CloudSync.cfg;
+    if(!cfg){Toast.error('请先配置云端');return}
+    // 用 base64 编码,方便复制粘贴(防止 URL 等特殊字符出问题)
+    const code='YJ-'+btoa(JSON.stringify({u:cfg.url,k:cfg.anonKey,t:Date.now()}));
+    Modal.open('📋 配置导出码',`
+      <div style="line-height:1.85">
+        <div style="padding:14px;background:#FFF8DC;border-radius:8px;margin-bottom:14px">
+          <div style="font-weight:600;color:var(--c-primary);margin-bottom:8px">📲 多设备同步使用</div>
+          <ol style="padding-left:20px;font-size:13px;color:var(--c-ink-2);line-height:1.85">
+            <li>点下方【全选复制】按钮</li>
+            <li>把代码发到您手机/另一台电脑(微信、邮件均可)</li>
+            <li>另一台设备打开本系统 → 云端同步 → 点【📥 从其他设备导入配置】</li>
+            <li>粘贴代码 → 自动配置完成</li>
+          </ol>
+        </div>
+        <textarea readonly id="exportCode" style="width:100%;height:120px;font-family:monospace;font-size:11px;padding:10px;border:1px solid var(--c-border);border-radius:6px;word-break:break-all">${code}</textarea>
+        <div style="margin-top:10px;text-align:right">
+          <button class="btn btn-primary" onclick="
+            const t=document.getElementById('exportCode');
+            t.select();
+            document.execCommand('copy');
+            this.textContent='✅ 已复制到剪贴板';
+            setTimeout(()=>this.textContent='全选复制',2000);
+          ">📋 全选复制</button>
+        </div>
+        <div style="margin-top:14px;padding:10px;background:#FFE4E1;border-radius:6px;font-size:12px;line-height:1.7">
+          ⚠️ 此代码包含您的云端访问密钥,请妥善保管,不要分享给店外人员。
+        </div>
+      </div>
+    `,null);
+  },
+
+  importConfig(){
+    Modal.open('📥 导入配置',`
+      <div class="form-item">
+        <label class="form-label required">粘贴另一台设备的配置码</label>
+        <textarea class="form-input" id="importCode" rows="6" style="font-family:monospace;font-size:11px;word-break:break-all" placeholder="YJ-xxxxx... 开头"></textarea>
+        <div style="font-size:12px;color:var(--c-muted);margin-top:6px">在已配置好的设备上,点【📋 一键复制配置】可获得此代码</div>
+      </div>
+    `,async()=>{
+      const code=$('#importCode').value.trim();
+      if(!code.startsWith('YJ-')){Toast.error('配置码格式错误,应以 YJ- 开头');return false}
+      try{
+        const data=JSON.parse(atob(code.slice(3)));
+        if(!data.u||!data.k){Toast.error('配置码内容不完整');return false}
+        CloudSync.saveConfig(data.u,data.k);
+        Toast.success('✅ 配置已导入,正在测试...');
+        const test=await CloudSync.testConnection();
+        if(test.ok){
+          Toast.success('✅ 云端连接成功!点【⬇️ 立即拉取】把云端数据同步过来');
+        }else{
+          Toast.error('⚠️ 配置已保存但连接失败:'+test.msg);
+        }
+        this.refresh();
+      }catch(e){
+        Toast.error('配置码解析失败,请重新复制完整代码');
+        return false;
+      }
+    });
   }
 };
 
@@ -4883,9 +6131,11 @@ const OverallModule = {
     const att=await DataStore.all('attendance');
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
+    const csReports=await DataStore.all('cs_reports');
     const month=currentMonth();
     const rows=users.map(u=>{
-      const s=Calc.calcMonthSalary(u,perf,att,leaves,month,summaries);
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
       return{u,s};
     }).sort((a,b)=>b.s.totalPerf-a.s.totalPerf);
 
@@ -5020,10 +6270,12 @@ const ExportModule = {
     const att=await DataStore.all('attendance');
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
+    const csReports=await DataStore.all('cs_reports');
     const month=currentMonth();
     const rows=[['员工','岗位','本月业绩','完成率','底薪','全勤奖','岗位工资','超额提成','加班费','好评奖','迟到扣款','请假扣款','应发','扣款','实发薪资']];
     users.forEach(u=>{
-      const s=Calc.calcMonthSalary(u,perf,att,leaves,month,summaries);
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
       if(s.kind==='intern'){
         rows.push([u.name,s.level.name,s.totalPerf,'-',`补助¥${s.allowance}(${s.attendDays}天)`,'-','-','-',
           s.overtimePay,s.reviewReward,'-','-',s.gross,0,s.net]);
@@ -5151,8 +6403,8 @@ document.addEventListener('click',async e=>{
   const key=t.dataset.key,i=parseInt(t.dataset.i),id=t.dataset.id,idx=parseInt(t.dataset.idx);
 
   const actions={
-    'inc':()=>PerfModule.changeCount(key,1),
-    'dec':()=>PerfModule.changeCount(key,-1),
+    'inc':()=>PerfModule.changeCount(key,0.5),
+    'dec':()=>PerfModule.changeCount(key,-0.5),
     'add-img':()=>{
       const inp=document.createElement('input');
       inp.type='file';inp.accept='image/*';inp.multiple=true;
@@ -5173,7 +6425,15 @@ document.addEventListener('click',async e=>{
     'reset-pwd':()=>UserModule.resetPwd(id),
     'toggle-user':()=>UserModule.toggle(id),
     // 我的
-    'logout':()=>{if(confirm('确认退出登录?'))Auth.logout()},
+    'logout':()=>{
+      Modal.open('🚪 安全退出',`
+        <div style="line-height:1.85;text-align:center;padding:10px 0">
+          <div style="font-size:48px;margin-bottom:12px">👋</div>
+          <div>确认要退出登录吗?</div>
+          <div style="font-size:13px;color:var(--c-muted);margin-top:8px">下次登录还能看到所有数据</div>
+        </div>
+      `,()=>{Auth.logout()});
+    },
     'change-pwd':()=>ProfileModule.showChangePwd(),
     // 灵感记录
     'edit-insp':()=>InspirationModule.edit(id),
@@ -5192,17 +6452,28 @@ document.addEventListener('click',async e=>{
     'rank-tab':()=>RankModule.switchTab(t.dataset.key),
     // 云同步
     'cloud-config':()=>CloudModule.showConfig(),
+    'save-cs-report':()=>CustomerServiceModule.save(),
     'cloud-test':()=>CloudModule.test(),
+    'cloud-diagnostic':()=>CloudModule.runDiagnostic(),
     'cloud-pull':()=>CloudModule.pull(),
     'cloud-push':()=>CloudModule.push(),
     'cloud-flush':()=>CloudModule.flush(),
     'cloud-disconnect':()=>CloudModule.disconnect(),
     'cloud-show-sql':()=>CloudModule.showSQL(),
+    // 客服 · 客资管理
+    'cs-add':()=>CustomerServiceModule.add(),
+    'cs-edit':()=>CustomerServiceModule.edit(id),
+    'cs-deal':()=>CustomerServiceModule.markDeal(id),
+    'cs-cancel':()=>CustomerServiceModule.markCancel(id),
+    'cs-status':()=>CustomerServiceModule.markStatus(id, t.dataset.s),
+    'cs-view':()=>CustomerServiceModule.switchView(t.dataset.key),
+    'cloud-export-config':()=>CloudModule.exportConfig(),
+    'cloud-import-config':()=>CloudModule.importConfig(),
     // 自定义价格
     'add-custom-row':()=>PerfModule.addCustomRow(),
     'rm-custom-row':()=>PerfModule.removeCustomRow(idx),
-    'inc-cust':()=>PerfModule.changeCustomCount(parseInt(t.dataset.i),1),
-    'dec-cust':()=>PerfModule.changeCustomCount(parseInt(t.dataset.i),-1)
+    'inc-cust':()=>PerfModule.changeCustomCount(parseInt(t.dataset.i),0.5),
+    'dec-cust':()=>PerfModule.changeCustomCount(parseInt(t.dataset.i),-0.5)
   };
   actions[a]&&actions[a]();
 });
@@ -5244,6 +6515,7 @@ Bus.on('data:changed',()=>{
     else if(cur==='rank')RankModule.refresh();
     else if(cur==='totalsalary')TotalSalaryModule.refresh();
     else if(cur==='learning')LearningModule.refresh();
+    else if(cur==='cs')CustomerServiceModule.refresh();
   },300);
 });
 
@@ -5275,6 +6547,8 @@ async function doLogin(){
   console.log('[Login] 用户提交:',u);
   try{
     await Auth.login(u,p);
+    // 记住用户名(不记密码,安全)
+    try{localStorage.setItem('yj_last_user',u)}catch(e){}
     $('#loginPage').style.display='none';
     $('#app').classList.add('active');
     Router.go('home');
@@ -5286,6 +6560,16 @@ async function doLogin(){
     console.error('[Login] 失败详情',err);
   }
 }
+
+// 启动时回填上次登录的用户名
+try{
+  const lastUser=localStorage.getItem('yj_last_user');
+  if(lastUser && $('#loginUser') && !$('#loginUser').value){
+    $('#loginUser').value=lastUser;
+    // 自动聚焦到密码栏
+    setTimeout(()=>{const p=$('#loginPass');if(p)p.focus()},100);
+  }
+}catch(e){}
 
 // 双保险:form 的 submit 和 按钮的 click 都触发登录
 const loginForm=$('#loginForm');
@@ -5302,22 +6586,51 @@ if(loginBtn){
   if(el)el.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();doLogin()}});
 });
 
-// 🔧 一键修复账号按钮
+// 🔧 修复账号按钮 - 安全增强版
 const repairBtn=$('#btnRepair');
 if(repairBtn){
   repairBtn.addEventListener('click',async()=>{
-    if(!confirm('将重置账号数据为默认账号:\n\n• 店长 admin / 123456\n• 高级化妆师 mua_senior / 123456\n• 中级化妆师 mua_middle / 123456\n• 初级化妆师 mua_junior / 123456\n• 实习生 intern / 123456\n\n(业绩/签到/工作总结等其他数据不受影响)\n\n确认修复?'))return;
+    // 第一步:输入店长安全口令
+    const code=prompt('⚠️ 安全提示\n\n此功能仅在登录异常时使用,会重建默认账号(不会删除现有账号或数据)。\n\n请输入店长安全口令(默认 yjcas):');
+    if(code===null)return; // 取消
+    
+    // 默认安全口令(店长可在系统内修改)
+    let savedCode='yjcas';
     try{
-      const ok=await DataStore.resetAccounts();
-      if(ok){
-        alert('✅ 账号已修复!请用 admin/123456 登录(或选择其他角色)');
-        $('#loginUser').value='admin';
-        $('#loginPass').value='123456';
-        $('#loginErr').textContent='';
-        updateDiag();
-      }else{
-        alert('❌ 修复失败,请查看浏览器控制台(F12)获取详情');
+      const stored=localStorage.getItem('yj_repair_code');
+      if(stored)savedCode=stored;
+    }catch(e){}
+    
+    if(code!==savedCode){
+      alert('❌ 安全口令错误!\n\n如忘记,请联系店长或清空浏览器数据后重新初始化。');
+      return;
+    }
+    
+    try{
+      // 改为"补充缺失的账号"模式:只创建不存在的默认账号,不覆盖已有的
+      const existing=await DataStore.all('users');
+      const existingUsernames=new Set(existing.map(u=>u.username));
+      const defaults=[
+        {id:'admin',username:'admin',password:'123456',name:'店长',role:'admin',level:'senior'},
+        {id:'mua_senior',username:'mua_senior',password:'123456',name:'高级化妆师',role:'employee',level:'senior'},
+        {id:'mua_middle',username:'mua_middle',password:'123456',name:'中级化妆师',role:'employee',level:'middle'},
+        {id:'mua_junior',username:'mua_junior',password:'123456',name:'初级化妆师',role:'employee',level:'junior'},
+        {id:'intern_01',username:'intern',password:'123456',name:'实习生',role:'employee',level:'intern'}
+      ];
+      let added=0;
+      for(const u of defaults){
+        if(!existingUsernames.has(u.username)){
+          await DataStore.put('users',{...u,active:true,createdAt:Date.now()});
+          added++;
+        }
       }
+      if(added===0){
+        alert('✅ 所有默认账号都已存在,无需修复。\n\n如果仍然登录不进去,可能是密码错了。');
+      }else{
+        alert(`✅ 补充了 ${added} 个缺失的默认账号(密码 123456)\n\n现有账号不受影响。`);
+      }
+      $('#loginErr').textContent='';
+      updateDiag();
     }catch(e){
       alert('❌ 修复失败:'+e.message);
     }
@@ -5425,6 +6738,7 @@ window.ImgUtil=ImgUtil;
 window.HomeModule=HomeModule;
 window.DataStore=DataStore;
 window.RankModule=RankModule;
+window.CustomerServiceModule=CustomerServiceModule;
 window.TotalSalaryModule=TotalSalaryModule;
 window.CloudModule=CloudModule;
 window.CloudSync=CloudSync;
