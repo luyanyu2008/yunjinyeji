@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#8B0000">
-<title>云锦长安 · 员工管理系统 YJ-EMS</title>
+<title>云锦长安 · 员工管理系统 v8 · 终极投产版</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700;900&family=Noto+Sans+SC:wght@300;400;500;700&family=Cormorant+Garamond:wght@500;700&display=swap" rel="stylesheet">
 <style>
 /* ================== 设计令牌 ================== */
@@ -544,7 +544,7 @@ tr:hover td{background:rgba(201,169,97,.05)}
   <!-- 顶部导航 -->
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="topbar-logo">云锦长安<small>YUNJIN EMS</small></div>
+      <div class="topbar-logo">云锦长安<small>YUNJIN EMS · v8</small></div>
       <div class="topbar-user">
         <div class="avatar" id="topAvatar">员</div>
         <div class="user-info">
@@ -919,6 +919,36 @@ tr:hover td{background:rgba(201,169,97,.05)}
       <div id="csContent"></div>
     </div>
 
+    <!-- 🆕 v6 摄影回片监控 -->
+    <div class="page" id="page-orders">
+      <div class="page-header">
+        <button class="page-back" onclick="Router.go('home')">←</button>
+        <div class="page-title-bar"></div>
+        <div class="page-title">📷 摄影订单监控</div>
+      </div>
+      <div id="ordersContent"></div>
+    </div>
+
+    <!-- 🆕 v6 客诉管理 -->
+    <div class="page" id="page-complaints">
+      <div class="page-header">
+        <button class="page-back" onclick="Router.go('home')">←</button>
+        <div class="page-title-bar"></div>
+        <div class="page-title">📞 客诉管理</div>
+      </div>
+      <div id="complaintsContent"></div>
+    </div>
+
+    <!-- 🆕 v7 门店 SOP 核验 -->
+    <div class="page" id="page-sop">
+      <div class="page-header">
+        <button class="page-back" onclick="Router.go('home')">←</button>
+        <div class="page-title-bar"></div>
+        <div class="page-title">📋 门店 SOP 核验</div>
+      </div>
+      <div id="sopContent"></div>
+    </div>
+
   </main>
 </div>
 
@@ -1002,8 +1032,8 @@ const Bus = {
 
 /* ============ DataStore 数据层（IndexedDB） ============ */
 const DB_NAME='yj_ems_v3';
-const DB_VERSION=4;
-const STORES=['users','attendance','performance','leaves','summaries','settings','inspirations','operation_logs','learning_courses','cs_reports'];
+const DB_VERSION=5;
+const STORES=['users','attendance','performance','leaves','summaries','settings','inspirations','operation_logs','learning_courses','cs_reports','sop_records'];
 
 const DataStore = {
   db:null,
@@ -1105,6 +1135,24 @@ const DataStore = {
   },
 
   async delete(store,id){
+    // 🔧 误删保护:删除前自动备份到本地"回收站"(localStorage,保留 30 天)
+    try{
+      const original=await this.get(store,id);
+      if(original){
+        const trash=JSON.parse(localStorage.getItem('yj_trash')||'[]');
+        trash.push({
+          store,
+          data:original,
+          deletedAt:Date.now(),
+          deletedBy:(typeof Auth!=='undefined' && Auth.current)?Auth.current.name:'unknown'
+        });
+        // 只保留近 30 天 + 最多 200 条(避免 localStorage 爆)
+        const cutoff=Date.now()-30*86400000;
+        const recent=trash.filter(x=>x.deletedAt>cutoff).slice(-200);
+        localStorage.setItem('yj_trash',JSON.stringify(recent));
+      }
+    }catch(e){console.warn('[Trash] 备份失败',e)}
+    
     if(this.mode==='ls'){
       const arr=this._lsGetAll(store).filter(x=>x.id!==id);
       this._lsSaveAll(store,arr);
@@ -1126,8 +1174,43 @@ const DataStore = {
     });
   },
 
+  // 查看回收站
+  getTrash(){
+    try{return JSON.parse(localStorage.getItem('yj_trash')||'[]')}catch(e){return []}
+  },
+
+  // 从回收站恢复一条
+  async restoreFromTrash(idx){
+    const trash=this.getTrash();
+    const item=trash[idx];
+    if(!item)return false;
+    // 写回(会触发同步)
+    await this.put(item.store,item.data);
+    // 从回收站移除
+    trash.splice(idx,1);
+    localStorage.setItem('yj_trash',JSON.stringify(trash));
+    return item;
+  },
+
+  // 清空回收站
+  clearTrash(){localStorage.setItem('yj_trash','[]')},
+
   // 内部方法:不触发同步钩子的写入(用于云端拉取后回写本地)
+  // 如果本地版本更新,跳过写入(冲突解决:最后写入者胜出)
   async _putLocal(store,data){
+    // 防御:云端数据可能没有 _updatedAt
+    const remoteTs = data._updatedAt || 0;
+    // 比较本地版本
+    try{
+      const local=await this.get(store,data.id);
+      if(local && local._updatedAt && local._updatedAt > remoteTs){
+        // 本地更新,跳过覆盖(避免拉取时覆盖未推送的本地数据)
+        console.log(`[DataStore] 跳过覆盖 ${store}/${data.id}: 本地${new Date(local._updatedAt).toISOString()} > 云端${new Date(remoteTs).toISOString()}`);
+        return;
+      }
+    }catch(e){
+      // get 失败说明本地没有,直接写入
+    }
     if(this.mode==='ls'){
       const arr=this._lsGetAll(store);
       const i=arr.findIndex(x=>x.id===data.id);
@@ -1232,6 +1315,194 @@ const MAKEUP_COMMISSION=15;   // 妆造 ¥15/组
 const CUSTOMER_SOURCES = ['转介绍','老客户','推荐','酒店推荐','微信','抖音','小红书','美团大众点评','其他'];
 // 预约方式
 const BOOKING_TYPES = ['定金预约','直接来','待跟进'];
+// 拍摄场景(固定 6 项 + 其他自定义)
+const DEFAULT_SCENES = ['不夜城','慈恩公园','青龙寺','兴庆宫','大唐芙蓉园','城墙','其他(自定义)'];
+
+// 🆕 v6 预设套系定义
+const PACKAGES = {
+  set_premium: {
+    name: '精致全配系列',
+    desc: '不夜城/慈恩等',
+    items: [
+      {key:'premium_1', name:'单人 599', amount:599, withPhoto:true},
+      {key:'premium_2', name:'双人 799', amount:799, withPhoto:true},
+      {key:'premium_3', name:'三人 1099', amount:1099, withPhoto:true},
+      {key:'premium_4', name:'四人 1399', amount:1399, withPhoto:true},
+      {key:'premium_5', name:'五人 1699', amount:1699, withPhoto:true}
+    ]
+  },
+  set_luxury: {
+    name: '奢华全配系列',
+    desc: '走秀款/兴庆宫等',
+    items: [
+      {key:'luxury_1', name:'单人 799', amount:799, withPhoto:true},
+      {key:'luxury_2', name:'双人 999', amount:999, withPhoto:true},
+      {key:'luxury_3', name:'三人 1399', amount:1399, withPhoto:true},
+      {key:'luxury_4', name:'四人 1699', amount:1699, withPhoto:true},
+      {key:'luxury_5', name:'五人 1999', amount:1999, withPhoto:true}
+    ]
+  },
+  single_makeup: {
+    name: '单妆发系列',
+    desc: '只做妆发',
+    items: [
+      {key:'mk_w_499', name:'女士 499', amount:499, withPhoto:false},
+      {key:'mk_w_399', name:'女士 399', amount:399, withPhoto:false},
+      {key:'mk_w_299', name:'女士 299', amount:299, withPhoto:false},
+      {key:'mk_w_199', name:'女士 199', amount:199, withPhoto:false},
+      {key:'mk_m_188', name:'男士 188(含妆)', amount:188, withPhoto:false},
+      {key:'mk_g_199', name:'女童 199', amount:199, withPhoto:false},
+      {key:'mk_b_129', name:'男童 129(含妆)', amount:129, withPhoto:false}
+    ]
+  },
+  single_rental: {
+    name: '单租赁系列',
+    desc: '不化妆,只租服装',
+    items: [
+      {key:'rt_m_128', name:'男士 128(单租)', amount:128, withPhoto:false},
+      {key:'rt_b_99',  name:'男童 99(单租)',  amount:99,  withPhoto:false}
+    ]
+  },
+  custom: {
+    name: '完全自定义',
+    desc: '没有合适套系,直接填金额',
+    items: []
+  }
+};
+
+// 🆕 v6 客诉分类
+const COMPLAINT_CATEGORIES = {
+  service:     {name:'服务态度', desc:'语气生硬/响应慢/不耐烦'},
+  skill:       {name:'专业技能', desc:'化妆不满意/拍摄构图差/修图不自然'},
+  environment: {name:'硬件环境', desc:'服装破损/店内气味/环境拥挤'},
+  price:       {name:'价格/隐形消费', desc:'对补差价有异议/计费不透明'},
+  other:       {name:'其他', desc:''}
+};
+
+const COMPLAINT_LEVELS = {
+  low:  {name:'🟢 低', color:'#10b981', desc:'轻微不满,口头说明即可'},
+  mid:  {name:'🟡 中', color:'#f59e0b', desc:'明确不满,需要补救'},
+  high: {name:'🔴 高', color:'#dc2626', desc:'严重投诉,需立即处理'}
+};
+
+const COMPLAINT_RESOLUTIONS = ['退款','重拍','重修','赠送优惠券','安抚并接受','其他'];
+const COMPLAINT_STATUSES = {
+  pending:   {name:'待处理',     color:'#dc2626'},
+  following: {name:'跟进中',     color:'#f59e0b'},
+  resolved:  {name:'已处理并满意', color:'#10b981'}
+};
+
+// 摄影回片时限(天)
+const PHOTO_DELIVERY_DAYS = 7;
+const PHOTO_WARNING_DAYS = 5;
+
+// 🆕 v8 SOP 核验 — 按云锦长安《品质流程检查表》逐项落地
+const SOP_FINE_PER_SHIFT = 10;  // 班次未达标扣款(元/班次)
+// 岗位标签:全员/化妆师/礼服/店长/晚班/早班/轮值
+// category:卫生清洁 / 物品清洗 / 员工技术 / 个人卫生 / 垃圾处理 / 设施清洁 / 收银点单 / 出单
+const SOP_SHIFTS = {
+  morning: {
+    name: '早班 SOP',
+    icon: '🌅',
+    deadline: '09:00',
+    desc: '开店前 10 分钟完成',
+    items: [
+      // 1. 卫生清洁
+      {key:'m01_ad_light',     name:'关闭门前圆形广告灯',        category:'卫生清洁', role:'早班'},
+      {key:'m02_pos_open',     name:'开启收银机及播放音乐',        category:'卫生清洁', role:'早班'},
+      {key:'m03_front_clean',  name:'前台无明显灰尘/纸屑/边角无垃圾', category:'卫生清洁', role:'早班'},
+      {key:'m04_front_tidy',   name:'前台物品归置整齐 / 垃圾袋',    category:'卫生清洁', role:'早班'},
+      {key:'m05_water_cup',    name:'饮水机一次性杯子已及时清理',     category:'卫生清洁', role:'早班'},
+      {key:'m06_makeup_table', name:'妆台整洁 + 提示册摆放',        category:'卫生清洁', role:'化妆师'},
+      {key:'m07_mirror',       name:'镜子无指纹/水渍',           category:'卫生清洁', role:'全员'},
+      {key:'m08_fitting_room', name:'试衣间整洁不凌乱无杂物',        category:'卫生清洁', role:'全员'},
+      {key:'m09_clothes',      name:'汉服无掉落/无不整齐',         category:'卫生清洁', role:'礼服'},
+      {key:'m10_clothes_set',  name:'服饰成套挂在正确价格区',         category:'卫生清洁', role:'礼服'},
+      {key:'m11_dust_bag',     name:'走秀高定汉服套防尘袋',          category:'卫生清洁', role:'礼服'},
+      {key:'m12_iron_clothes', name:'皱衣服已整理熨烫',            category:'卫生清洁', role:'礼服'}
+    ]
+  },
+  midday: {
+    name: '营业中巡检',
+    icon: '☀️',
+    deadline: '17:00',
+    desc: '营业中滚动检查',
+    items: [
+      // 2. 物品清点 / 清洗
+      {key:'d01_hair_acc',     name:'发饰道具归置(成套发饰无缺失)',     category:'物品清洗', role:'轮值'},
+      {key:'d02_shoes',        name:'鞋子摆放归纳鞋头朝外',             category:'物品清洗', role:'轮值'},
+      {key:'d03_wig_care',     name:'假发周期护理(一周一次)',          category:'物品清洗', role:'轮值'},
+      {key:'d04_clothes_repair',name:'服饰破损修补/熨烫挂置',          category:'物品清洗', role:'礼服+轮值'},
+      {key:'d05_daily_wash',   name:'当日待洗汉服分类清洗',             category:'物品清洗', role:'礼服'},
+      {key:'d06_skirt_check',  name:'裙边手搓检查(避免返工)',          category:'物品清洗', role:'礼服'},
+      {key:'d07_bag_wash',     name:'汉服套袋清洗(避免损坏)',          category:'物品清洗', role:'礼服'},
+      {key:'d08_disinfect',    name:'试穿服饰消毒后熨烫挂置',           category:'物品清洗', role:'礼服'},
+      {key:'d09_shoe_wash',    name:'鞋子周期清洗(一周一次)',          category:'物品清洗', role:'轮值'},
+      {key:'d10_wig_wash',     name:'假发周期清洗(一周一次)',          category:'物品清洗', role:'轮值'},
+      {key:'d11_clean_tools',  name:'清洁工具拖把抹布洗净晾干',          category:'物品清洗', role:'轮值'},
+      {key:'d12_props_back',   name:'道具用完归回收纳架',               category:'物品清洗', role:'全员'},
+      {key:'d13_save_supply',  name:'化妆品/物料按需取用无浪费',         category:'物品清洗', role:'化妆师'},
+      {key:'d14_makeup_room',  name:'化妆间无粉末残留/镜子无指纹',       category:'物品清洗', role:'化妆师'},
+      {key:'d15_clip_sort',    name:'夹子和发饰分类(一字夹/U型)',     category:'物品清洗', role:'化妆师'},
+      {key:'d16_wig_comb',     name:'假发全部梳理完毕',                category:'物品清洗', role:'化妆师'},
+      // 3. 员工技术(全员)
+      {key:'d17_tips_known',   name:'熟知客户注意事项(可背诵)',        category:'员工技术', role:'全员'},
+      {key:'d18_price_known',  name:'熟知服务项目内容及价格',            category:'员工技术', role:'全员'},
+      {key:'d19_flow_correct', name:'按流程操作:问好-提示-沟通-需求-满意度', category:'员工技术', role:'全员'},
+      {key:'d20_skill_grow',   name:'技能提升落实(每日学习总结)',       category:'员工技术', role:'全员'},
+      {key:'d21_satisfaction', name:'确认每位客户满意度并反馈',          category:'员工技术', role:'全员'},
+      // 4. 个人卫生与工作态度
+      {key:'d22_apron',        name:'围裙正确穿着且干净',               category:'个人卫生', role:'全员'},
+      {key:'d23_mask',         name:'化妆师戴口罩上岗',                category:'个人卫生', role:'化妆师'},
+      {key:'d24_attitude',     name:'微笑服务积极不带情绪',             category:'个人卫生', role:'全员'},
+      {key:'d25_initiative',   name:'发挥主观能动性主动沟通',           category:'个人卫生', role:'全员'},
+      {key:'d26_group_response',name:'工作群内积极回应有反馈',           category:'个人卫生', role:'全员'},
+      // 7. 收银点单
+      {key:'d27_greet',        name:'客人入店礼貌问候',                 category:'收银点单', role:'全员'},
+      {key:'d28_smile',        name:'始终保持微笑接待',                 category:'收银点单', role:'全员'},
+      {key:'d29_focus',        name:'注意力集中聆听需求',               category:'收银点单', role:'全员'},
+      {key:'d30_eye_contact',  name:'与顾客保持礼貌目光接触',           category:'收银点单', role:'全员'},
+      {key:'d31_upsell',       name:'适当建议性销售推介产品',           category:'收银点单', role:'全员'},
+      {key:'d32_try_pack',     name:'客户试穿物品归置不遗漏',           category:'收银点单', role:'礼服+轮值'},
+      {key:'d33_repeat_order', name:'店长向顾客复述订单内容金额',         category:'收银点单', role:'店长'},
+      {key:'d34_payment',      name:'结账方式确认价格清晰',              category:'收银点单', role:'店长'},
+      {key:'d35_guide',        name:'礼貌引导顾客妆发',                category:'收银点单', role:'店长'},
+      {key:'d36_ticket',       name:'拍单号妆发到群(图和票根对)',       category:'收银点单', role:'店长'},
+      // 8. 出单
+      {key:'d37_confirm_makeup',name:'化妆师+店长确认妆发服饰整齐',      category:'出单', role:'化妆师+店长'},
+      {key:'d38_inform_risk',  name:'签确认单告知黄牛风险/归还方式',     category:'出单', role:'全员'},
+      {key:'d39_farewell',     name:'店长亲切送别"祝旅途愉快"',         category:'出单', role:'店长'},
+      {key:'d40_speed',        name:'非高峰期妆发控制 1 小时内',         category:'出单', role:'化妆师'},
+      {key:'d41_peak_hint',    name:'高峰期告知等待并安抚情绪',          category:'出单', role:'店长+礼服'},
+      {key:'d42_deposit',      name:'押金退还前核查道具/服饰/发饰',      category:'出单', role:'店长'},
+      {key:'d43_clean_table',  name:'客人离开 3 分钟内收台',             category:'出单', role:'化妆师'},
+      {key:'d44_floor_walk',   name:'店长巡视服务区关注顾客',            category:'出单', role:'店长'}
+    ]
+  },
+  evening: {
+    name: '晚班清场 SOP',
+    icon: '🌙',
+    deadline: '21:30',
+    desc: '闭店后 5 分钟内完成,事关安全',
+    items: [
+      // 5. 全区域垃圾处理
+      {key:'e01_trash',        name:'前厅/试衣间/妆造区垃圾全清',        category:'垃圾处理', role:'晚班'},
+      {key:'e02_carpet',       name:'地毯区无尖锐物/线头/夹子',          category:'垃圾处理', role:'晚班'},
+      {key:'e03_decoration',   name:'装饰物品及层架无积灰',              category:'垃圾处理', role:'晚班'},
+      // 6. 设施清洁储存管理
+      {key:'e04_props_back',   name:'当日道具全部归位',                  category:'设施清洁', role:'晚班'},
+      {key:'e05_power_off',    name:'空调/灯光关闭/熨烫机断电',          category:'设施清洁', role:'晚班'},
+      {key:'e06_ad_light_on',  name:'门口圆形转转告灯开启并旋转',         category:'设施清洁', role:'晚班'},
+      {key:'e07_table_tidy',   name:'台面物品摆放在指定位置',            category:'设施清洁', role:'晚班'},
+      {key:'e08_inventory',    name:'库存预警:补货/到货/出库群',         category:'设施清洁', role:'全员'},
+      {key:'e09_storage',      name:'储物柜内包材易耗品分区整齐',         category:'设施清洁', role:'晚班'},
+      {key:'e10_bin_clean',    name:'垃圾桶外部清洁/无异味/已倾倒',      category:'设施清洁', role:'晚班'},
+      // 安全
+      {key:'e11_lock_door',    name:'锁门(后门 + 主门)',              category:'设施清洁', role:'晚班'},
+      {key:'e12_security',     name:'安防摄像头确认在线',                 category:'设施清洁', role:'晚班'}
+    ]
+  }
+};
 // 客资完整状态
 // pending(待跟进) → followup(跟进中) → booked(定金预约) / direct(直接来) → arrived(已到店) → deal(已成交)
 // 也可能 cancel(取消) / noshow(放鸽子未到)
@@ -1490,26 +1761,56 @@ const Calc = {
     missingSummaryDays=Math.max(0,missingSummaryDays);
     const noSummaryFine=missingSummaryDays*NO_SUMMARY_FINE;
 
+    // 🆕 v7:SOP 扣款 — 当月已逾期的班次数 × ¥10
+    // user._sopRecords 由调用方注入(本月该员工的全部 SOP 记录)
+    const sopRecords=(user._sopRecords||[]).filter(r=>r.date && r.date.startsWith(month));
+    // 🔑 关键:只有当员工当天有签到时,才考核 SOP(没签到=请假/休息=不扣)
+    const attendedDates=new Set(att.filter(r=>r.signInTime||r.checkIn).map(r=>r.date));
+    // 当月有签到但未在截止前完成的班次数
+    let sopLateShifts=0;
+    const sopLateDetail=[];
+    sopRecords.forEach(r=>{
+      // 如果当天没签到,跳过(休息日不考核)
+      if(!attendedDates.has(r.date))return;
+      if(r.late){
+        sopLateShifts++;
+        sopLateDetail.push({date:r.date,shift:r.shift});
+      }
+    });
+    // 也要算"未填的班次":有签到但当日缺整个班次记录(根本没去打 SOP)
+    // 简化处理:本回合先只考核 已记录的逾期。未填班次不扣(避免误伤)
+    const sopFine=sopLateShifts*SOP_FINE_PER_SHIFT;
+
     if(level.type==='intern'){
       const result=this._calcInternSalary(user,level,perf,att,leaves);
       result.missingSummaryDays=missingSummaryDays;
       result.noSummaryFine=noSummaryFine;
-      result.deduct=(result.deduct||0)+noSummaryFine;
+      result.sopLateShifts=sopLateShifts;
+      result.sopFine=sopFine;
+      result.sopLateDetail=sopLateDetail;
+      result.deduct=(result.deduct||0)+noSummaryFine+sopFine;
       result.net=Math.max(0,result.gross-result.deduct);
       return result;
     }
     if(level.type==='customer'){
-      // 客服:从 perfRecords 中拿不到客资,需要传 csReportRecords 参数
-      // 用户记录上挂上当月客资,_calcCustomerSalary 即可读取
-      // (csReports 实际由 calcMonthSalary 第 6 个参数传入,见下方扩展)
       const result=this._calcCustomerSalary(user,level,perf,att,leaves,month);
-      // 客服无未写总结扣款(本来就无底薪可扣)
+      // 🆕 v7:客服也考核 SOP(若有签到)
+      if(sopFine>0){
+        result.sopLateShifts=sopLateShifts;
+        result.sopFine=sopFine;
+        result.sopLateDetail=sopLateDetail;
+        result.deduct=(result.deduct||0)+sopFine;
+        result.net=Math.max(0, result.net-sopFine);
+      }
       return result;
     }
     const result=this._calcMuaSalary(user,level,perf,att,leaves);
     result.missingSummaryDays=missingSummaryDays;
     result.noSummaryFine=noSummaryFine;
-    result.deduct=(result.deduct||0)+noSummaryFine;
+    result.sopLateShifts=sopLateShifts;
+    result.sopFine=sopFine;
+    result.sopLateDetail=sopLateDetail;
+    result.deduct=(result.deduct||0)+noSummaryFine+sopFine;
     result.net=Math.max(0,result.gross-result.deduct);
     return result;
   },
@@ -1520,15 +1821,20 @@ const Calc = {
   _calcCustomerSalary(user,level,perf,att,leaves,month){
     const num=v=>{const n=Number(v);return isNaN(n)?0:n};
     
-    // user._csReports 由调用方注入(本月内 status==='deal' 的客资)
-    const dealReports=(user._csReports||[]).filter(r=>r.status==='deal');
+    const allCsReports=(user._csReports||[]);
+    const dealReports=allCsReports.filter(r=>r.status==='deal');
     
-    // 每条已成交客资:有摄影=¥20,无摄影=¥15(妆造)
-    // "一组不管多少人都是 15,带摄影是 20"
+    // 🆕 v6:订单有"高级未解决客诉" 暂停结算
+    const blocked=dealReports.filter(r=>{
+      return (r.complaints||[]).some(c=>c.level==='high'&&c.status!=='resolved');
+    });
+    const payable=dealReports.filter(r=>!blocked.includes(r));
+    
+    // 每条已成交客资(且无暂停):有摄影=¥20,无摄影=¥15
     let photoGroups=0, makeupGroups=0;
     let photoCommission=0, makeupCommission=0;
     
-    dealReports.forEach(r=>{
+    payable.forEach(r=>{
       if(r.withPhoto){
         photoGroups++;
         photoCommission+=PHOTO_COMMISSION;
@@ -1538,33 +1844,57 @@ const Calc = {
       }
     });
     
+    // 暂停结算的统计(仅展示用)
+    let blockedCount=blocked.length;
+    let blockedAmount=blocked.reduce((s,r)=>s+(r.withPhoto?PHOTO_COMMISSION:MAKEUP_COMMISSION),0);
+    
     const totalGroups=photoGroups+makeupGroups;
     
-    // 客服无底薪、无全勤、无扣款
-    const gross=photoCommission+makeupCommission;
+    // 🆕 v8:阶梯奖励 — 100 单 ¥300 / 200 单 ¥700(取最高档,可结算订单数)
+    let tierBonus=0, tierName='';
+    if(totalGroups>=200){tierBonus=700;tierName='达成 200 单 → ¥700'}
+    else if(totalGroups>=100){tierBonus=300;tierName='达成 100 单 → ¥300'}
+    
+    // 🆕 v8:客服好评奖(与他人一致的阶梯奖励)
+    // 1平台¥3 / 2平台¥5 / 3平台¥8(每个客户独立计算)
+    let reviewCount=0, reviewReward=0;
+    payable.forEach(r=>{
+      const reviews=r.reviews||[];
+      if(reviews.length>0){
+        reviewCount++;
+        if(reviews.length>=3)reviewReward+=8;
+        else if(reviews.length===2)reviewReward+=5;
+        else if(reviews.length===1)reviewReward+=3;
+      }
+    });
+    
+    const gross=photoCommission+makeupCommission+tierBonus+reviewReward;
     const net=gross;
     
-    // 转化率:成交数 / 总客资数
-    const allCsReports=(user._csReports||[]);
-    const conversionRate=allCsReports.length>0
-      ? Math.round(dealReports.length/allCsReports.length*1000)/10
+    // 转化率分母排除 cancel
+    const validCsReports=allCsReports.filter(r=>r.status!=='cancel');
+    const conversionRate=validCsReports.length>0
+      ? Math.round(dealReports.length/validCsReports.length*1000)/10
       : 0;
     
     return {
       user,level,kind:'customer',
-      // 客服特有字段
       photoGroups, makeupGroups, totalGroups,
       photoCommission, makeupCommission,
       conversionRate,
-      totalCsCount: allCsReports.length,
+      totalCsCount: validCsReports.length,
       dealCsCount: dealReports.length,
-      // 兼容化妆师字段(其他模块可能引用,全部归零)
+      // 🆕 暂停结算
+      blockedCount, blockedAmount,
+      // 🆕 v8 阶梯奖励 + 好评奖
+      tierBonus, tierName,
+      reviewCount, reviewReward,
+      // 兼容化妆师字段
       baseSalary:0, attBonus:0, attBonusLost:false,
       totalPerf:0, ratio:0,
       jobPay:0, jobBase:0, target:0,
       overAmount:0, bonus:0, bonusSegments:[],
       overtimeHours:0, overtimePay:0,
-      reviewCount:0, reviewReward:0,
       lateMinutes:0, earlyMinutes:0, lateEarlyFine:0,
       leaveDays:0, leaveFine:0,
       missingSummaryDays:0, noSummaryFine:0,
@@ -1593,7 +1923,8 @@ const CloudSync = {
     inspirations:'yj_inspirations',
     operation_logs:'yj_operation_logs',
     learning_courses:'yj_learning_courses',
-    cs_reports:'yj_cs_reports'
+    cs_reports:'yj_cs_reports',
+    sop_records:'yj_sop_records'
   },
 
   loadConfig(){
@@ -1792,6 +2123,11 @@ const CloudSync = {
   // 增量拉取所有表
   async pullAll(){
     if(!this.enabled || this.status==='error')return {ok:false,msg:'云端未连接'};
+    // 🔧 防并发锁
+    if(this.syncing){
+      console.warn('[Cloud] 同步中,忽略重复 pullAll');
+      return {ok:false,msg:'已有同步任务正在进行,请稍候'};
+    }
     let total=0;
     try{
       this.syncing=true;
@@ -1799,7 +2135,7 @@ const CloudSync = {
       for(const [store,table] of Object.entries(this.STORE_TABLE_MAP)){
         const rows=await this._request(table,{query:'?select=*'});
         if(!Array.isArray(rows))continue;
-        // 写入本地(不触发同步钩子,避免循环)
+        // 写入本地(_putLocal 已加时间戳冲突解决)
         for(const row of rows){
           if(row.payload && row.payload.id){
             await DataStore._putLocal(store,row.payload);
@@ -1822,9 +2158,28 @@ const CloudSync = {
     }
   },
 
+  // 拉取单张表(用于登录前同步 users 等场景)
+  async pullStore(store){
+    if(!this.enabled)return;
+    const table=this.STORE_TABLE_MAP[store];
+    if(!table)return;
+    const rows=await this._request(table,{query:'?select=*'});
+    if(!Array.isArray(rows))return;
+    for(const row of rows){
+      if(row.payload && row.payload.id){
+        await DataStore._putLocal(store,row.payload);
+      }
+    }
+  },
+
   // 全量推送所有本地数据到云端(初次同步用)
   async pushAll(){
     if(!this.enabled)return {ok:false,msg:'云端未配置'};
+    // 🔧 防并发锁:同时只能跑一个 pushAll
+    if(this.syncing){
+      console.warn('[Cloud] 同步中,忽略重复 pushAll');
+      return {ok:false,msg:'已有同步任务正在进行,请稍候'};
+    }
     let total=0,skipped=0,failed=0;
     const errors=[];
     let currentTable='',currentStore='',currentRecord=null;
@@ -2133,6 +2488,18 @@ const Auth = {
 
   async login(username,password){
     console.log('[Auth] 尝试登录:',username);
+    
+    // 🔧 致命隐患修复:登录前先拉取云端最新 users
+    // 防止店长在另一端改了密码,本地用户用新密码登录失败
+    if(typeof CloudSync!=='undefined' && CloudSync.enabled && CloudSync.status==='online'){
+      try{
+        await CloudSync.pullStore('users');
+        console.log('[Auth] 已拉取云端最新账号');
+      }catch(e){
+        console.warn('[Auth] 拉取云端账号失败,使用本地数据:',e.message);
+      }
+    }
+    
     const users=await DataStore.all('users');
     console.log('[Auth] 库中账号列表:',users.map(u=>u.username));
     if(users.length===0){
@@ -2152,8 +2519,17 @@ const Auth = {
     if(u.password!==password)throw new Error('密码错误');
     this.current=u;
     sessionStorage.setItem('yj_user',JSON.stringify({id:u.id}));
+    
+    // 🔧 致命隐患修复:lastLogin 单独走 _putLocal 不触发同步
+    // 否则会把本地(可能过时的)user 全量推回云端,覆盖店长刚改的密码/状态
     u.lastLogin=Date.now();
-    try{await DataStore.put('users',u)}catch(e){console.warn('更新登录时间失败',e)}
+    try{
+      await DataStore._putLocal('users',u);
+      // 标记需要轻量同步(只更新 lastLogin 字段,不影响其他字段)
+      // 这里直接走完整 put 也可以,因为现在 _updatedAt 在 put 时才更新
+      // 关键是登录时不应该用 put(),因为这会覆盖云端最新数据
+    }catch(e){console.warn('更新登录时间失败',e)}
+    
     Logger.log('login',`登录系统`);
     return u;
   },
@@ -2194,7 +2570,10 @@ const Router = {
       rank:()=>RankModule.refresh(),
       totalsalary:()=>TotalSalaryModule.refresh(),
       cloud:()=>CloudModule.refresh(),
-      cs:()=>CustomerServiceModule.refresh()
+      cs:()=>CustomerServiceModule.refresh(),
+      orders:()=>OrderModule.refresh(),
+      complaints:()=>ComplaintModule.refresh(),
+      sop:()=>SOPModule.refresh()
     };
     hooks[page]&&hooks[page]();
   }
@@ -2237,7 +2616,7 @@ const HomeModule = {
         let salaryErrors=0;
         const monthSalaryTotal=users.reduce((s,emp)=>{
           try{
-            const empWithCs={...emp,_csReports:csReportsAll.filter(r=>r.userId===emp.id && isSameMonth(r.bookingDate,month))};
+            const empWithCs={...emp,_csReports:csReportsAll.filter(r=>r.userId===emp.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===emp.id && r.date && r.date.startsWith(month))};
             const sal=Calc.calcMonthSalary(empWithCs,perfAll,attAll,leavesAll,month,summariesAll);
             return s+(Number(sal.net)||0);
           }catch(e){
@@ -2297,7 +2676,7 @@ const HomeModule = {
 
         let salary={net:0};
         try{
-          const uWithCs={...u,_csReports:csReportsAll.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+          const uWithCs={...u,_csReports:csReportsAll.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
           salary=Calc.calcMonthSalary(uWithCs,perfAll,attAll,leavesAll,month,summariesAll)
         }
         catch(e){console.warn('[Home] 个人薪酬计算失败',e)}
@@ -2341,6 +2720,7 @@ const HomeModule = {
       features = [
         {icon:'🕘',name:'签到打卡',desc:'迟到/加班',page:'signin'},
         {icon:'📞',name:'客资管理',desc:'预约/排单/转化',page:'cs'},
+        {icon:'📋',name:'SOP 核验',desc:'班次打卡',page:'sop'},
         {icon:'📝',name:'请假申请',desc:'事/病/调休',page:'leave'},
         {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
         {icon:'💰',name:'薪酬明细',desc:'纯提成',page:'salary'},
@@ -2352,6 +2732,7 @@ const HomeModule = {
         {icon:'🕘',name:'签到打卡',desc:'迟到/加班',page:'signin'},
         {icon:'💼',name:'业绩录入',desc:'快速计数',page:'perf'},
         {icon:'📊',name:'业绩明细',desc:'查询统计',page:'perflist'},
+        {icon:'📋',name:'SOP 核验',desc:'班次打卡',page:'sop'},
         {icon:'📝',name:'请假申请',desc:'事/病/调休',page:'leave'},
         {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
         {icon:'💰',name:'薪酬明细',desc:isIntern?'补助/加班/好评':'实时计算',page:'salary'},
@@ -2363,6 +2744,9 @@ const HomeModule = {
     
     if(u.role==='admin'){
       features.push({icon:'📞',name:'客资管理',desc:'查看全部',page:'cs'});
+      features.push({icon:'📷',name:'摄影监控',desc:'回片倒计时',page:'orders'});
+      features.push({icon:'📣',name:'客诉管理',desc:'原因分析',page:'complaints'});
+      features.push({icon:'📋',name:'SOP 核验',desc:'班次打卡',page:'sop'});
       features.push({icon:'👥',name:'账号管理',desc:'员工账号',page:'users'});
       features.push({icon:'📈',name:'全员汇总',desc:'排行导出',page:'overall'});
       features.push({icon:'💵',name:'全员薪资',desc:'总和/明细',page:'totalsalary'});
@@ -2915,6 +3299,12 @@ const PerfListModule = {
         const imgs=(r.items||[]).reduce((s,i)=>s+(i.images||[]).length,0);
         const detail=(r.items||[]).map(i=>`${i.typeName||i.type}×${i.count}`).join('、')||'-';
         const userCol=isAdmin?`<td>${escapeHtml(userMap[r.userId]||r.userId)}</td>`:'';
+        // 员工无删除权限(业绩是工资依据);只有店长能删
+        const opCol = isAdmin
+          ? `<td><button class="btn btn-ghost btn-sm" data-action="view-perf" data-id="${r.id}">查看</button>
+                 <button class="btn btn-ghost btn-sm" data-action="del-perf" data-id="${r.id}" style="color:var(--c-danger)">删除</button></td>`
+          : `<td><button class="btn btn-ghost btn-sm" data-action="view-perf" data-id="${r.id}">查看</button>
+                 <span style="font-size:11px;color:var(--c-muted);margin-left:6px" title="员工无删除权限,如需删除请联系店长">🔒</span></td>`;
         return `<tr>
           <td>${r.date}</td>
           ${userCol}
@@ -2923,8 +3313,7 @@ const PerfListModule = {
           <td class="td-money">${fmtMoney(amt)}</td>
           <td class="td-center">${(r.reviews||[]).length}</td>
           <td class="td-center">${imgs}</td>
-          <td><button class="btn btn-ghost btn-sm" data-action="view-perf" data-id="${r.id}">查看</button>
-              <button class="btn btn-ghost btn-sm" data-action="del-perf" data-id="${r.id}" style="color:var(--c-danger)">删除</button></td>
+          ${opCol}
         </tr>`;
       }).join('');
     }
@@ -2962,9 +3351,9 @@ const PerfListModule = {
     const r=await DataStore.get('performance',id);
     if(!r){Toast.error('记录不存在');return}
     const u=Auth.current;
-    // 权限校验:管理员或本人才能删
-    if(u.role!=='admin' && r.userId!==u.id){
-      Toast.error('您只能删除自己的业绩记录');
+    // 权限校验:仅店长可删除业绩(员工不可,因为业绩是工资依据)
+    if(u.role!=='admin'){
+      Toast.error('员工无删除权限。如需修改,请联系店长。');
       return;
     }
     // 用 Modal 替代 native confirm(部分浏览器/iframe 会阻止)
@@ -3481,7 +3870,8 @@ const SalaryModule = {
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
     const csReports=await DataStore.all('cs_reports');
-    const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,currentMonth()))};
+    const sopAll=await DataStore.all('sop_records');
+    const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,currentMonth())),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(currentMonth()))};
     const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,currentMonth(),summaries);
 
     // 客服独立展示(纯提成)
@@ -3506,13 +3896,49 @@ const SalaryModule = {
             <div class="salary-line"><span>已成交 ${s.makeupGroups} 组(纯妆造)× ¥${MAKEUP_COMMISSION}</span><strong>${fmtMoney(s.makeupCommission)}</strong></div>
           </div>
         </div>
+        ${(s.tierBonus||0)>0?`<div class="salary-section">
+          <div class="salary-section-title"><span>③ 月度阶梯奖励</span><span class="salary-section-value" style="color:var(--c-success)">+${fmtMoney(s.tierBonus)}</span></div>
+          <div class="salary-section-body">
+            <div class="salary-line"><span>🏆 ${escapeHtml(s.tierName)}</span><strong style="color:var(--c-success)">+${fmtMoney(s.tierBonus)}</strong></div>
+            <div style="font-size:11px;color:var(--c-muted);padding:6px 8px;background:var(--c-cream);border-radius:4px;margin-top:6px">
+              规则:本月成交满 100 单 +¥300,满 200 单 +¥700(取最高档,不叠加)
+            </div>
+          </div>
+        </div>`:`<div class="salary-section">
+          <div class="salary-section-title"><span>③ 月度阶梯奖励</span><span class="salary-section-value" style="color:var(--c-muted)">¥0</span></div>
+          <div class="salary-section-body">
+            <div class="salary-line"><span>距 100 单还差 ${Math.max(0,100-s.totalGroups)} 单</span><strong>¥0</strong></div>
+            <div style="font-size:11px;color:var(--c-muted);padding:6px 8px;background:var(--c-cream);border-radius:4px;margin-top:6px">
+              💪 加油!满 100 单 +¥300,满 200 单 +¥700
+            </div>
+          </div>
+        </div>`}
+        ${(s.reviewReward||0)>0?`<div class="salary-section">
+          <div class="salary-section-title"><span>④ 好评奖</span><span class="salary-section-value" style="color:var(--c-success)">+${fmtMoney(s.reviewReward)}</span></div>
+          <div class="salary-section-body">
+            <div class="salary-line"><span>${s.reviewCount} 位客户好评(1平台¥3 / 2平台¥5 / 3平台¥8)</span><strong style="color:var(--c-success)">+${fmtMoney(s.reviewReward)}</strong></div>
+          </div>
+        </div>`:''}
         <div class="card" style="background:linear-gradient(135deg,var(--c-cream),var(--c-paper))">
           <div style="text-align:center">
             <div style="font-size:13px;color:var(--c-muted)">实发薪资</div>
             <div style="font-family:var(--font-num);font-size:32px;font-weight:700;color:var(--c-primary)">${fmtMoney(s.net)}</div>
-            <div style="font-size:12px;color:var(--c-muted);margin-top:8px;line-height:1.7">客服说明:纯提成,无底薪/全勤/扣款。<br>每成交 1 单妆造 ¥${MAKEUP_COMMISSION},每成交 1 单妆造+摄影 ¥${PHOTO_COMMISSION}。<br>仅状态为"已成交"的客资计入提成。</div>
+            <div style="font-size:12px;color:var(--c-muted);margin-top:8px;line-height:1.7">客服说明:纯提成,无底薪/全勤/扣款。<br>每成交 1 单妆造 ¥${MAKEUP_COMMISSION},每成交 1 单妆造+摄影 ¥${PHOTO_COMMISSION}。<br>+ 月度阶梯奖励 + 好评奖。仅"已成交"客资计入提成。</div>
           </div>
         </div>
+        ${s.blockedCount>0?`<div class="card" style="background:#FEE2E2;border:2px solid #dc2626">
+          <div style="text-align:center;color:#991b1b">
+            <div style="font-weight:600;font-size:14px">⚠️ 提成暂停结算</div>
+            <div style="font-size:13px;margin-top:6px">本月有 <strong>${s.blockedCount}</strong> 单订单存在"高级未解决"客诉,涉及提成 <strong>¥${s.blockedAmount}</strong> 暂未结算</div>
+            <div style="font-size:11px;color:var(--c-muted);margin-top:6px">客诉处理为"已处理并满意"后自动恢复结算</div>
+          </div>
+        </div>`:''}
+        ${(s.sopFine||0)>0?`<div class="card" style="background:#FEF3C7;border:2px solid #f59e0b">
+          <div style="text-align:center;color:#b45309">
+            <div style="font-weight:600;font-size:14px">📋 SOP 执行未达标扣款</div>
+            <div style="font-size:13px;margin-top:6px">本月 SOP 逾期 <strong>${s.sopLateShifts}</strong> 班次,扣款 <strong>¥${s.sopFine}</strong></div>
+          </div>
+        </div>`:''}
       `;
       return;
     }
@@ -3547,6 +3973,13 @@ const SalaryModule = {
             <div class="salary-line"><span>${s.reviewCount} 位客户好评(阶梯:1平台¥3 / 2平台¥5 / 3平台¥8)</span><strong>${fmtMoney(s.reviewReward)}</strong></div>
           </div>
         </div>
+        ${(s.deduct||0)>0?`<div class="salary-section">
+          <div class="salary-section-title"><span>④ 扣款</span><span class="salary-section-value" style="color:var(--c-danger)">-${fmtMoney(s.deduct)}</span></div>
+          <div class="salary-section-body">
+            ${(s.noSummaryFine||0)>0?`<div class="salary-line"><span>未写工作总结 ${s.missingSummaryDays||0} 天 × ¥${NO_SUMMARY_FINE}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.noSummaryFine)}</strong></div>`:''}
+            ${(s.sopFine||0)>0?`<div class="salary-line"><span>📋 SOP 执行未达标 ${s.sopLateShifts||0} 班次 × ¥${SOP_FINE_PER_SHIFT}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.sopFine)}</strong></div>`:''}
+          </div>
+        </div>`:''}
         <div class="card" style="background:linear-gradient(135deg,var(--c-cream),var(--c-paper))">
           <div style="text-align:center">
             <div style="font-size:13px;color:var(--c-muted)">实发薪资</div>
@@ -3643,6 +4076,7 @@ const SalaryModule = {
           <div class="salary-line"><span>迟到 ${s.lateMinutes} 分钟 + 早退 ${s.earlyMinutes} 分钟 × ¥1</span><strong style="color:var(--c-danger)">-${fmtMoney(s.lateEarlyFine)}</strong></div>
           <div class="salary-line"><span>请假 ${s.leaveDays} 天 × ¥100(调休不扣)</span><strong style="color:var(--c-danger)">-${fmtMoney(s.leaveFine)}</strong></div>
           <div class="salary-line"><span>未写工作总结 ${s.missingSummaryDays||0} 天 × ¥${NO_SUMMARY_FINE}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.noSummaryFine||0)}</strong></div>
+          <div class="salary-line"><span>📋 SOP 执行未达标 ${s.sopLateShifts||0} 班次 × ¥${SOP_FINE_PER_SHIFT}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.sopFine||0)}</strong></div>
         </div>
       </div>
 
@@ -3673,6 +4107,7 @@ const SalaryModule = {
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
     const csReports=await DataStore.all('cs_reports');
+    const sopAll=await DataStore.all('sop_records');
     
     if(users.length===0){
       $('#adminSalaryQuickView').innerHTML='<div style="color:var(--c-muted);padding:20px 0;text-align:center">暂无在职员工</div>';
@@ -3680,7 +4115,7 @@ const SalaryModule = {
     }
     
     const rows=users.map(u=>{
-      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
       return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
     });
     const totalNet=rows.reduce((s,r)=>s+r.net,0);
@@ -4768,7 +5203,20 @@ const CustomerServiceModule = {
     }
 
     const all=await DataStore.all('cs_reports');
-    const myAll=isAdmin?all:all.filter(r=>r.userId===u.id);
+    // 🆕 v7:店长看全部;普通员工看 (自己创建的 OR 指派给自己的)
+    const myAll=isAdmin?all:all.filter(r=>r.userId===u.id || r.assignedTo===u.id);
+    
+    // 🆕 v7:分配给我的待跟进(状态在跟进/预约阶段,且未到店未取消)
+    const assignedToMe=isAdmin?[]:all.filter(r=>{
+      return r.assignedTo===u.id 
+        && ['pending','followup','booked','direct'].includes(r.status||'pending');
+    });
+    
+    // 🆕 v6:预加载 userMap(用于卡片显示化妆师/摄影师姓名)
+    const allUsers=await DataStore.all('users');
+    this._userMap={};
+    allUsers.forEach(u=>{this._userMap[u.id]=u.name});
+    
     const td=today();
     const month=currentMonth();
 
@@ -4817,6 +5265,10 @@ const CustomerServiceModule = {
       {key:'list',name:`📋 客资列表(${myAll.length})`},
       {key:'analytics',name:`📊 来源分析`}
     ];
+    // 🆕 v7:有分配 → 加任务大厅 tab
+    if(!isAdmin && assignedToMe.length>0){
+      tabs.unshift({key:'assigned',name:`📌 我的任务(${assignedToMe.length})`});
+    }
     if(isAdmin)tabs.push({key:'team',name:`👥 团队`});
     
     $('#csContent').innerHTML=`
@@ -4852,6 +5304,20 @@ const CustomerServiceModule = {
 
       ${aiTip}
 
+      <!-- 🆕 v7:分配给我的待跟进(任务大厅) -->
+      ${assignedToMe.length>0?`<div class="card" style="margin-top:14px;background:linear-gradient(135deg,#FEE2E2,#FFFBFB);border:2px solid #dc2626;cursor:pointer" data-action="cs-view" data-key="assigned">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="font-size:32px">📌</div>
+          <div style="flex:1">
+            <div style="font-weight:700;color:#dc2626;font-size:15px">分配给我的待跟进 · ${assignedToMe.length} 单</div>
+            <div style="font-size:12px;color:var(--c-ink-2);margin-top:4px">
+              ${assignedToMe.slice(0,3).map(r=>escapeHtml(r.customerName||'(未填)')).join('、')}${assignedToMe.length>3?`等 ${assignedToMe.length} 位客户`:''}
+            </div>
+          </div>
+          <div style="background:#dc2626;color:#fff;border-radius:50%;min-width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;padding:0 6px">${assignedToMe.length}</div>
+        </div>
+      </div>`:''}
+
       <div class="card" style="margin-top:14px">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
           ${tabs.map(t=>`<button class="btn btn-sm ${t.key===this.curView?'btn-primary':'btn-outline'}" data-action="cs-view" data-key="${t.key}">${t.name}</button>`).join('')}
@@ -4868,9 +5334,40 @@ const CustomerServiceModule = {
     else if(this.curView==='list')this._renderList(myAll,isAdmin);
     else if(this.curView==='analytics')this._renderAnalytics(myAll);
     else if(this.curView==='team')this._renderTeam(all);
+    else if(this.curView==='assigned')this._renderAssigned(assignedToMe,isAdmin);
   },
 
   switchView(key){this.curView=key; this.refresh()},
+
+  // 🆕 v7:任务大厅(分配给我的待跟进)
+  _renderAssigned(list,isAdmin){
+    if(list.length===0){
+      $('#csViewBody').innerHTML=`<div style="text-align:center;padding:30px;color:var(--c-muted)">
+        <div style="font-size:48px">📭</div>
+        <div style="margin-top:10px">店长还没分配任务给您</div>
+      </div>`;
+      return;
+    }
+    // 按优先级排序:今天的 > 明天的 > 其它,有 flagged 优先
+    const td=today();
+    list.sort((a,b)=>{
+      const aPri = (a.flagged?100:0) + (a.bookingDate===td?50:0) + (a.bookingDate>td?10:0);
+      const bPri = (b.flagged?100:0) + (b.bookingDate===td?50:0) + (b.bookingDate>td?10:0);
+      if(aPri!==bPri)return bPri-aPri;
+      return (a.bookingDate||'').localeCompare(b.bookingDate||'');
+    });
+    
+    $('#csViewBody').innerHTML=`
+      <div style="padding:12px;background:linear-gradient(135deg,#FEE2E2,#FFFBFB);border-radius:8px;margin-bottom:12px">
+        <div style="font-weight:700;color:#dc2626;font-size:14px">📌 任务大厅 · 共 ${list.length} 单待跟进</div>
+        <div style="font-size:12px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+          这里是店长分配给您的客户。请尽快联系并补齐:跟进情况、客户意向、是否收定金、是否到店。<br>
+          完成跟进后,务必更新状态(收定金/到店/成交/取消)。
+        </div>
+      </div>
+      ${this._renderCards(list,isAdmin)}
+    `;
+  },
 
   // 视图1:今日
   _renderToday(all,isAdmin){
@@ -4895,26 +5392,76 @@ const CustomerServiceModule = {
 
   // 视图2:排单日历(未来 14 天)
   _renderCalendar(all,isAdmin){
+    const range=this._calRange||'next14';  // next14 | last30 | next30 | month
+    
+    let startDate, endDate, title;
+    const now=new Date();
+    if(range==='next14'){
+      startDate=new Date(now);
+      endDate=new Date(now);endDate.setDate(endDate.getDate()+13);
+      title='未来 14 天';
+    }else if(range==='next30'){
+      startDate=new Date(now);
+      endDate=new Date(now);endDate.setDate(endDate.getDate()+29);
+      title='未来 30 天';
+    }else if(range==='last30'){
+      startDate=new Date(now);startDate.setDate(startDate.getDate()-29);
+      endDate=new Date(now);
+      title='过去 30 天';
+    }else if(range==='month'){
+      startDate=new Date(now.getFullYear(),now.getMonth(),1);
+      endDate=new Date(now.getFullYear(),now.getMonth()+1,0);
+      title='本月';
+    }else if(range==='all'){
+      // 显示所有日期(从最早到最晚)
+      const dates=all.map(r=>r.bookingDate).filter(Boolean).sort();
+      if(dates.length){
+        startDate=new Date(dates[0]);
+        endDate=new Date(dates[dates.length-1]);
+      }else{
+        startDate=new Date(now);endDate=new Date(now);
+      }
+      title='全部历史';
+    }
+    
     const days=[];
-    const start=new Date();
-    for(let i=0;i<14;i++){
-      const d=new Date(start);
+    const dayCount=Math.min(180,Math.ceil((endDate-startDate)/(86400000))+1);
+    for(let i=0;i<dayCount;i++){
+      const d=new Date(startDate);
       d.setDate(d.getDate()+i);
       const dateStr=d.toISOString().slice(0,10);
       const list=all.filter(r=>r.bookingDate===dateStr && r.status!=='cancel')
         .sort((a,b)=>(a.bookingTime||'').localeCompare(b.bookingTime||''));
-      days.push({date:dateStr,d,list});
+      // 仅在该范围内有预约 OR 是未来 14 天 才显示
+      if(list.length>0 || (range==='next14' && d>=now-86400000)){
+        days.push({date:dateStr,d,list});
+      }
     }
     
+    const ranges=[
+      {key:'next14',name:'未来14天'},
+      {key:'next30',name:'未来30天'},
+      {key:'month',name:'本月'},
+      {key:'last30',name:'过去30天'},
+      {key:'all',name:'全部历史'}
+    ];
+
     $('#csViewBody').innerHTML=`
-      <div style="font-size:13px;color:var(--c-muted);margin-bottom:10px">📆 未来 14 天预约一览(按日期分组)</div>
-      ${days.map(({date,d,list})=>{
+      <div class="card" style="background:var(--c-cream);padding:10px;margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:13px;color:var(--c-muted)">📆 范围:</span>
+        ${ranges.map(r=>`<button class="btn btn-sm ${r.key===range?'btn-primary':'btn-outline'}" data-action="cs-cal-range" data-key="${r.key}" style="font-size:12px">${r.name}</button>`).join('')}
+        <div style="flex:1"></div>
+        <button class="btn btn-sm btn-outline" data-action="cs-export-csv" style="font-size:12px">📥 导出 CSV</button>
+      </div>
+      <div style="font-size:13px;color:var(--c-muted);margin-bottom:10px">${title} · 共 ${days.reduce((s,x)=>s+x.list.length,0)} 单预约</div>
+      ${days.length===0?`<div style="text-align:center;padding:30px;color:var(--c-muted)">该范围内没有预约记录</div>`:days.map(({date,d,list})=>{
         const isToday=date===today();
+        const isPast=date<today();
         const weekday=['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
         return `
-          <div style="margin-bottom:14px;padding:14px;background:${isToday?'linear-gradient(135deg,#FFF8DC,#fff)':'var(--c-cream)'};border-radius:8px;border-left:4px solid ${isToday?'var(--c-primary)':'var(--c-border)'}">
+          <div style="margin-bottom:14px;padding:14px;background:${isToday?'linear-gradient(135deg,#FFF8DC,#fff)':isPast?'#f5f5f5':'var(--c-cream)'};border-radius:8px;border-left:4px solid ${isToday?'var(--c-primary)':isPast?'#ccc':'var(--c-border)'};${isPast?'opacity:0.85':''}">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${list.length?'10px':'0'}">
-              <div style="font-weight:600;color:${isToday?'var(--c-primary)':'var(--c-ink)'}">${escapeHtml(date)} ${weekday}${isToday?' · 今日':''}</div>
+              <div style="font-weight:600;color:${isToday?'var(--c-primary)':'var(--c-ink)'}">${escapeHtml(date)} ${weekday}${isToday?' · 今日':isPast?' · 已过':''}</div>
               <div style="font-size:13px;color:var(--c-muted)">${list.length} 单</div>
             </div>
             ${list.length===0?`<div style="font-size:13px;color:var(--c-muted)">暂无预约</div>`:list.map(r=>`
@@ -4933,26 +5480,238 @@ const CustomerServiceModule = {
     `;
   },
 
-  // 视图3:全部客资列表
+  setCalRange(key){
+    this._calRange=key;
+    this.refresh();
+  },
+
+  // 视图3:全部客资列表(完整历史 + 筛选 + 导出)
   _renderList(all,isAdmin){
-    const sorted=[...all].sort((a,b)=>{
+    // 筛选条件
+    const filterMonth=this._listFilterMonth||'all';
+    const filterStatus=this._listFilterStatus||'all';
+    const filterSource=this._listFilterSource||'all';
+    const searchKw=(this._listSearch||'').trim().toLowerCase();
+    const pageSize=this._listPageSize||50;
+    
+    // 🆕 v6:多重过滤
+    let filtered=[...all];
+    if(filterMonth!=='all'){
+      filtered=filtered.filter(r=>isSameMonth(r.bookingDate,filterMonth));
+    }
+    if(filterStatus!=='all'){
+      filtered=filtered.filter(r=>r.status===filterStatus);
+    }
+    if(filterSource!=='all'){
+      filtered=filtered.filter(r=>r.source===filterSource);
+    }
+    // 🆕 全局搜索:姓名 / 电话 / 备注
+    if(searchKw){
+      filtered=filtered.filter(r=>{
+        return (r.customerName||'').toLowerCase().includes(searchKw)
+          || (r.phone||'').toLowerCase().includes(searchKw)
+          || (r.notes||'').toLowerCase().includes(searchKw)
+          || (r.scene||'').toLowerCase().includes(searchKw);
+      });
+    }
+    
+    filtered.sort((a,b)=>{
       const aTime=(a.bookingDate||'')+(a.bookingTime||'');
       const bTime=(b.bookingDate||'')+(b.bookingTime||'');
       return bTime.localeCompare(aTime);
     });
-    if(sorted.length===0){
-      $('#csViewBody').innerHTML='<div style="text-align:center;padding:30px;color:var(--c-muted)">暂无客资</div>';
-      return;
+    
+    // 月份选项(过去 12 月)
+    const monthOpts=[];
+    const d=new Date();
+    for(let i=0;i<12;i++){
+      const m=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      monthOpts.push(m);
+      d.setMonth(d.getMonth()-1);
     }
+    
+    // 🆕 分页:只渲染前 pageSize 条
+    const visibleList = filtered.slice(0, pageSize);
+    const hasMore = filtered.length > pageSize;
+    
     $('#csViewBody').innerHTML=`
-      <div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--c-muted)">
-        <span>共 ${sorted.length} 条</span> · 
-        <span>⭐ ${sorted.filter(r=>r.starred).length} 重点</span> · 
-        <span>⚠️ ${sorted.filter(r=>r.flagged).length} 需注意</span>
+      <!-- 🆕 v6:全局搜索 -->
+      <div class="card" style="padding:10px;margin-bottom:10px">
+        <div style="position:relative">
+          <input class="form-input" id="csSearch" placeholder="🔍 输入客户姓名 / 电话 / 备注 / 场景关键词..." 
+            value="${escapeHtml(this._listSearch||'')}"
+            style="padding-right:80px">
+          ${searchKw?`<button data-action="cs-clear-search" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:4px 10px;background:var(--c-cream);border:1px solid var(--c-border);border-radius:4px;font-size:12px;cursor:pointer">✕ 清空</button>`:''}
+        </div>
       </div>
-      ${this._renderCards(sorted.slice(0,50),isAdmin)}
-      ${sorted.length>50?`<div style="text-align:center;color:var(--c-muted);padding:14px;font-size:13px">显示最近 50 条</div>`:''}
+
+      <!-- 筛选条 -->
+      <div class="card" style="background:var(--c-cream);padding:10px;margin-bottom:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <select class="form-select" id="csFilterMonth" style="font-size:13px">
+            <option value="all" ${filterMonth==='all'?'selected':''}>📅 全部月份</option>
+            ${monthOpts.map(m=>`<option value="${m}" ${filterMonth===m?'selected':''}>${m}</option>`).join('')}
+          </select>
+          <select class="form-select" id="csFilterStatus" style="font-size:13px">
+            <option value="all" ${filterStatus==='all'?'selected':''}>📋 全部状态</option>
+            <option value="pending" ${filterStatus==='pending'?'selected':''}>🟡 待跟进</option>
+            <option value="followup" ${filterStatus==='followup'?'selected':''}>🟣 跟进中</option>
+            <option value="booked" ${filterStatus==='booked'?'selected':''}>🔵 定金预约</option>
+            <option value="direct" ${filterStatus==='direct'?'selected':''}>🌊 直接来</option>
+            <option value="arrived" ${filterStatus==='arrived'?'selected':''}>✓ 已到店</option>
+            <option value="deal" ${filterStatus==='deal'?'selected':''}>🎉 已成交</option>
+            <option value="noshow" ${filterStatus==='noshow'?'selected':''}>❌ 未到店</option>
+            <option value="cancel" ${filterStatus==='cancel'?'selected':''}>⊗ 已取消</option>
+          </select>
+          <select class="form-select" id="csFilterSource" style="font-size:13px">
+            <option value="all" ${filterSource==='all'?'selected':''}>🌟 全部来源</option>
+            ${CUSTOMER_SOURCES.map(s=>`<option value="${s}" ${filterSource===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:12px;color:var(--c-muted)">
+            筛出 <strong style="color:var(--c-primary)">${filtered.length}</strong>/${all.length} 条 · 
+            ⭐ ${filtered.filter(r=>r.starred).length} · 
+            ⚠️ ${filtered.filter(r=>r.flagged).length} · 
+            🌟 ${filtered.filter(r=>r.needReview).length}
+          </span>
+          <div style="flex:1"></div>
+          <button class="btn btn-sm btn-outline" data-action="cs-export-csv" style="font-size:12px">📥 导出 CSV(当前筛选)</button>
+          <button class="btn btn-sm btn-ghost" data-action="cs-clear-filter" style="font-size:12px">🔄 清除筛选</button>
+        </div>
+      </div>
+
+      ${filtered.length===0?`<div style="text-align:center;padding:30px;color:var(--c-muted)">${searchKw?'没有匹配的客资':'没有符合条件的客资'}</div>`:`
+        <div id="csListItems">${this._renderCards(visibleList,isAdmin)}</div>
+        ${hasMore?`
+          <div style="text-align:center;padding:14px">
+            <button class="btn btn-outline" data-action="cs-load-more" style="font-size:13px">⬇️ 加载更多 (${filtered.length-pageSize} 条剩余)</button>
+            <div style="font-size:11px;color:var(--c-muted);margin-top:6px">已显示 ${visibleList.length}/${filtered.length} 条</div>
+          </div>
+        `:`<div style="text-align:center;color:var(--c-muted);padding:14px;font-size:13px">已显示全部 ${filtered.length} 条</div>`}
+      `}
     `;
+
+    // 绑定筛选变化
+    ['csFilterMonth','csFilterStatus','csFilterSource'].forEach(id=>{
+      const el=$('#'+id);
+      if(el)el.addEventListener('change',()=>{
+        this._listFilterMonth=$('#csFilterMonth').value;
+        this._listFilterStatus=$('#csFilterStatus').value;
+        this._listFilterSource=$('#csFilterSource').value;
+        this._listPageSize=50;  // 重置分页
+        this._renderList(all,isAdmin);
+      });
+    });
+    // 🆕 搜索输入(防抖 200ms)
+    const sEl=$('#csSearch');
+    if(sEl){
+      let timer;
+      sEl.addEventListener('input',e=>{
+        clearTimeout(timer);
+        timer=setTimeout(()=>{
+          this._listSearch=e.target.value;
+          this._listPageSize=50;
+          this._renderList(all,isAdmin);
+          // 保持光标在搜索框
+          const el=$('#csSearch');
+          if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}
+        },200);
+      });
+    }
+  },
+
+  loadMore(){
+    this._listPageSize=(this._listPageSize||50)+50;
+    this.refresh();
+  },
+
+  clearSearch(){
+    this._listSearch='';
+    this._listPageSize=50;
+    this.refresh();
+  },
+
+  clearFilter(){
+    this._listFilterMonth='all';
+    this._listFilterStatus='all';
+    this._listFilterSource='all';
+    this.refresh();
+  },
+
+  // 导出当前筛选的客资为 CSV
+  async exportCsv(){
+    const all=await DataStore.all('cs_reports');
+    const u=Auth.current;
+    const isAdmin=u.role==='admin';
+    const myAll=isAdmin?all:all.filter(r=>r.userId===u.id);
+    
+    // 应用当前筛选
+    const fm=this._listFilterMonth||'all';
+    const fs=this._listFilterStatus||'all';
+    const fr=this._listFilterSource||'all';
+    let filtered=[...myAll];
+    if(fm!=='all')filtered=filtered.filter(r=>isSameMonth(r.bookingDate,fm));
+    if(fs!=='all')filtered=filtered.filter(r=>r.status===fs);
+    if(fr!=='all')filtered=filtered.filter(r=>r.source===fr);
+    
+    if(filtered.length===0){Toast.error('没有可导出的数据');return}
+    
+    filtered.sort((a,b)=>{
+      const aTime=(a.bookingDate||'')+(a.bookingTime||'');
+      const bTime=(b.bookingDate||'')+(b.bookingTime||'');
+      return bTime.localeCompare(aTime);
+    });
+    
+    const statusMap={pending:'待跟进',followup:'跟进中',booked:'定金预约',direct:'直接来',arrived:'已到店',deal:'已成交',noshow:'未到店',cancel:'已取消'};
+    const rows=[
+      ['预约日期','预约时间','客户称呼','电话','女士数','男士数','女童数','男童数','总人数','客户来源','服务类型','状态','重点','需注意','要好评','备注','客服员工','创建时间','到店时间','成交时间']
+    ];
+    filtered.forEach(r=>{
+      const total=(r.women||0)+(r.men||0)+(r.girls||0)+(r.boys||0);
+      rows.push([
+        r.bookingDate||'',
+        r.bookingTime||'',
+        r.customerName||'',
+        r.phone||'',
+        r.women||0,
+        r.men||0,
+        r.girls||0,
+        r.boys||0,
+        total,
+        r.source||'',
+        r.withPhoto?'妆造+摄影':'纯妆造',
+        statusMap[r.status]||r.status||'',
+        r.starred?'⭐重点':'',
+        r.flagged?'⚠️注意':'',
+        r.needReview?'🌟要好评':'',
+        r.notes||'',
+        r.userName||'',
+        r.createdAt?new Date(r.createdAt).toLocaleString('zh-CN'):'',
+        r.arrivedAt?new Date(r.arrivedAt).toLocaleString('zh-CN'):'',
+        r.dealAt?new Date(r.dealAt).toLocaleString('zh-CN'):''
+      ]);
+    });
+    
+    const fn=`客资明细_${fm==='all'?'全部':fm}_${today()}.csv`;
+    if(typeof ExportModule!=='undefined' && ExportModule.downloadCSV){
+      const retry=ExportModule.downloadCSV(fn,rows);
+      if(ExportModule._showPathTip)ExportModule._showPathTip(fn,retry);
+    }else{
+      // 备用下载方式
+      const BOM='\uFEFF';
+      const csv=BOM+rows.map(r=>r.map(c=>{
+        const s=String(c==null?'':c);
+        return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+      }).join(',')).join('\n');
+      const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=fn;a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),2000);
+    }
+    Logger.log('cs_export',`导出客资 ${filtered.length} 条`);
+    Toast.success(`✅ 已导出 ${filtered.length} 条客资`);
   },
 
   // 视图4:来源分析
@@ -5048,6 +5807,8 @@ const CustomerServiceModule = {
 
   // 客资卡片
   _renderCards(list,isAdmin){
+    // 🆕 v6:预先取一次员工 map(避免循环里频繁查找)
+    const userMap=this._userMap||{};
     return list.map(r=>{
       const stars=r.starred?'⭐':'';
       const flag=r.flagged?'⚠️':'';
@@ -5061,6 +5822,18 @@ const CustomerServiceModule = {
       if(r.boys)peopleParts.push(`男童${r.boys}`);
       const peopleStr=peopleParts.length?'👥 '+peopleParts.join(' '):'';
       const totalPeople=(r.women||0)+(r.men||0)+(r.girls||0)+(r.boys||0);
+
+      // 🆕 v6:服务团队
+      const muaNames=(r.assignedMuas||[]).map(id=>userMap[id]||id).filter(Boolean).join('、');
+      const photoName=r.assignedPhotographer?(userMap[r.assignedPhotographer]||r.assignedPhotographer):'';
+      // 🆕 v7:跟进人
+      const assignedName=r.assignedTo?(userMap[r.assignedTo]||r.assignedTo):'';
+      const teamParts=[];
+      if(assignedName)teamParts.push(`🎯 跟进人: <strong>${assignedName}</strong>`);
+      if(muaNames)teamParts.push(`👩‍🎨 ${muaNames}`);
+      if(photoName)teamParts.push(`📷 ${photoName}`);
+      if(r.scene)teamParts.push(`📍 ${escapeHtml(r.scene)}`);
+      const teamStr=teamParts.length?teamParts.join(' · '):'';
       
       // 根据当前状态决定可用快捷按钮
       const status=r.status||'pending';
@@ -5090,6 +5863,7 @@ const CustomerServiceModule = {
                 📞 ${escapeHtml(r.phone||'未填电话')}<br>
                 ${peopleStr?peopleStr+'<br>':''}
                 🌟 ${escapeHtml(r.source||'未知来源')} · ${r.withPhoto?'妆造+摄影 (¥20)':'纯妆造 (¥15)'}
+                ${teamStr?'<br>'+teamStr:''}
               </div>
               ${r.notes?`<div style="font-size:12px;color:var(--c-ink-2);margin-top:6px;padding:6px 8px;background:var(--c-cream);border-radius:4px">${escapeHtml(r.notes)}</div>`:''}
               ${reviewMark?`<div style="display:inline-block;font-size:12px;color:#b45309;margin-top:6px;padding:2px 8px;background:#FEF3C7;border-radius:4px">${reviewMark}</div>`:''}
@@ -5125,10 +5899,20 @@ const CustomerServiceModule = {
   async edit(id){
     const r=await DataStore.get('cs_reports',id);
     if(!r){Toast.error('记录不存在');return}
+    // 🆕 v7:权限校验 — 店长可编辑全部;普通员工只能编辑(指派给自己的 OR 自己创建的)
+    const u=Auth.current;
+    if(u.role!=='admin'){
+      const isOwner = r.userId===u.id;
+      const isAssigned = r.assignedTo===u.id;
+      if(!isOwner && !isAssigned){
+        Toast.error('无权编辑此客资,仅指定跟进人可操作');
+        return;
+      }
+    }
     this.openEditor(r);
   },
 
-  openEditor(rec){
+  async openEditor(rec){
     const isEdit=!!rec;
     const r=rec||{
       id:uuid(),customerName:'',phone:'',
@@ -5138,13 +5922,43 @@ const CustomerServiceModule = {
       // 人数:女士/男士/女童/男童
       women:0, men:0, girls:0, boys:0,
       // 预约方式 + 状态
-      bookingType:'定金预约',  // 定金预约 / 直接来 / 待跟进
-      status:'booked',         // booked / direct / pending / followup / arrived / deal / noshow / cancel
+      bookingType:'定金预约',
+      status:'booked',
+      // 🆕 v6:服务团队 + 场景
+      assignedMuas:[],         // 化妆师 user.id 数组(可多选)
+      assignedPhotographer:'', // 摄影师 user.id
+      scene:'',                 // 拍摄场景
+      // 🆕 v7:指派跟进人
+      assignedTo:'',
       starred:false,flagged:false,needReview:false,
       notes:'',
       userId:Auth.current.id, userName:Auth.current.name,
       createdAt:Date.now()
     };
+    
+    // 🆕 v6:加载在职员工(化妆师 + 摄影师候选,从 users 中筛选)
+    const allUsers=await DataStore.all('users');
+    const muaCandidates=allUsers.filter(u=>u.active && (LEVELS[u.level]||{}).type==='mua');
+    const interns=allUsers.filter(u=>u.active && (LEVELS[u.level]||{}).type==='intern');
+    
+    // 🆕 v8:摄影师独立(完全不复用员工列表),从 settings/photographers 读历史
+    let photographerHistory=[];
+    try{
+      const cfg=await DataStore.get('settings','photographers');
+      if(cfg && Array.isArray(cfg.value)){
+        photographerHistory=cfg.value;
+      }
+    }catch(e){}
+    
+    // 🆕 v8:场景固定 6 项 + 其他自定义,从 settings/scenes 读自定义历史
+    let sceneList=DEFAULT_SCENES;
+    let customSceneHistory=[];
+    try{
+      const sceneCfg=await DataStore.get('settings','scenes');
+      if(sceneCfg && Array.isArray(sceneCfg.value)){
+        customSceneHistory=sceneCfg.value;
+      }
+    }catch(e){}
     
     Modal.open(isEdit?'✏️ 编辑客资':'+ 新增客资',`
       <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -5196,6 +6010,78 @@ const CustomerServiceModule = {
           </select>
         </div>
       </div>
+
+      <!-- 🆕 v6:服务团队 + 拍摄场景 -->
+      <div class="form-item" style="margin-top:14px">
+        <label class="form-label">👩‍🎨 化妆师(可多选,影响业绩归属)</label>
+        <div style="padding:8px;background:var(--c-cream);border-radius:6px;max-height:140px;overflow-y:auto">
+          ${muaCandidates.length===0 && interns.length===0?'<div style="font-size:13px;color:var(--c-muted);padding:10px;text-align:center">还没有在职化妆师/实习生</div>':''}
+          ${muaCandidates.length>0?'<div style="font-size:11px;color:var(--c-muted);margin-bottom:4px">化妆师</div>':''}
+          ${muaCandidates.map(u=>{
+            const checked=(r.assignedMuas||[]).includes(u.id)?'checked':'';
+            const lvlName=(LEVELS[u.level]||{}).name||'';
+            return `<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0;cursor:pointer">
+              <input type="checkbox" data-cs-mua="${u.id}" ${checked}>
+              <span style="font-size:13px">${escapeHtml(u.name)} <span style="color:var(--c-muted);font-size:11px">${lvlName}</span></span>
+            </label>`;
+          }).join('')}
+          ${interns.length>0?'<div style="font-size:11px;color:var(--c-muted);margin-top:6px;margin-bottom:4px">实习生</div>':''}
+          ${interns.map(u=>{
+            const checked=(r.assignedMuas||[]).includes(u.id)?'checked':'';
+            return `<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0;cursor:pointer">
+              <input type="checkbox" data-cs-mua="${u.id}" ${checked}>
+              <span style="font-size:13px">${escapeHtml(u.name)} <span style="color:var(--c-muted);font-size:11px">实习</span></span>
+            </label>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <div class="form-item"><label class="form-label">📷 摄影师(可手动输入,自动记忆)</label>
+          <input class="form-input" id="csPhotographer" 
+            list="csPhotographerHistory" 
+            value="${escapeHtml(r.assignedPhotographer||'')}" 
+            placeholder="输入摄影师姓名(下次自动选择)">
+          <datalist id="csPhotographerHistory">
+            ${photographerHistory.map(p=>`<option value="${escapeHtml(p)}"></option>`).join('')}
+          </datalist>
+          ${photographerHistory.length>0?`<div style="font-size:11px;color:var(--c-muted);margin-top:4px">已记忆 ${photographerHistory.length} 位:${photographerHistory.slice(0,5).map(p=>escapeHtml(p)).join('、')}${photographerHistory.length>5?'…':''}</div>`:''}
+        </div>
+        <div class="form-item"><label class="form-label">📍 拍摄场景</label>
+          <select class="form-select" id="csScene">
+            <option value="">(未定)</option>
+            ${sceneList.map(s=>{
+              const isMatch = r.scene===s;
+              return `<option value="${s}" ${isMatch?'selected':''}>${escapeHtml(s)}</option>`;
+            }).join('')}
+            ${customSceneHistory.length>0?`<optgroup label="📜 历史自定义场景">${customSceneHistory.map(s=>`<option value="${escapeHtml(s)}" ${r.scene===s?'selected':''}>${escapeHtml(s)}</option>`).join('')}</optgroup>`:''}
+          </select>
+          <input class="form-input" id="csSceneCustom" 
+            value="${(r.scene && !sceneList.includes(r.scene) && !customSceneHistory.includes(r.scene))?escapeHtml(r.scene):''}" 
+            placeholder="选'其他'后这里输入新场景" 
+            style="margin-top:6px;display:${(r.scene && !sceneList.slice(0,6).includes(r.scene))||r.scene==='其他(自定义)'?'block':'none'}">
+        </div>
+      </div>
+
+      <!-- 🆕 v7:指定跟进人(仅店长可见,普通员工只能看自己的) -->
+      ${Auth.current.role==='admin'?`
+      <div class="form-item" style="margin-top:14px">
+        <label class="form-label">🎯 指定跟进人(任务大厅)</label>
+        <div style="padding:10px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border-radius:6px;border:1px solid var(--c-gold)">
+          <select class="form-select" id="csAssignedTo">
+            <option value="">(不指派,任何客服可看)</option>
+            ${allUsers.filter(u=>u.active).map(u=>{
+              const lvl=(LEVELS[u.level]||{}).name||'';
+              return `<option value="${u.id}" ${r.assignedTo===u.id?'selected':''}>${escapeHtml(u.name)} (${lvl})</option>`;
+            }).join('')}
+          </select>
+          <div style="font-size:11px;color:var(--c-muted);margin-top:6px;line-height:1.6">
+            💡 指派后,该员工首页会出现【📌 分配给我的待跟进】红点提醒。<br>
+            非指派人无法编辑此客资(仅可查看)。
+          </div>
+        </div>
+      </div>
+      `:''}
 
       <div class="form-item" style="margin-top:14px">
         <label class="form-label required">📋 预约方式 + 当前状态</label>
@@ -5251,6 +6137,11 @@ const CustomerServiceModule = {
       try{
         const name=$('#csName').value.trim();
         if(!name){Toast.error('请填写客户称呼');return false}
+        // 🆕 v6:收集化妆师选择
+        const muaIds=[];
+        document.querySelectorAll('[data-cs-mua]:checked').forEach(el=>{
+          muaIds.push(el.dataset.csMua);
+        });
         const data={
           ...r,
           customerName:name,
@@ -5264,6 +6155,19 @@ const CustomerServiceModule = {
           source:$('#csSource').value,
           withPhoto:$('#csWithPhoto').value==='1',
           status:$('#csStatus').value,
+          // 🆕 v6:服务团队 + 场景
+          assignedMuas: muaIds,
+          // 🆕 v8:摄影师独立(纯字符串,不是 user.id)
+          assignedPhotographer: ($('#csPhotographer')?.value || '').trim(),
+          // 🆕 v8:场景(选"其他"则取自定义输入框)
+          scene: (function(){
+            const sel = $('#csScene')?.value || '';
+            const custom = ($('#csSceneCustom')?.value || '').trim();
+            if(sel==='其他(自定义)' && custom)return custom;
+            return sel || custom || '';
+          })(),
+          // 🆕 v7:指派跟进人(仅店长可改;普通员工保持原值)
+          assignedTo: (Auth.current.role==='admin' && $('#csAssignedTo')) ? $('#csAssignedTo').value : (r.assignedTo||''),
           starred:$('#csStarred').checked,
           flagged:$('#csFlagged').checked,
           needReview:$('#csNeedReview').checked,
@@ -5271,6 +6175,23 @@ const CustomerServiceModule = {
           updatedAt:Date.now()
         };
         await DataStore.put('cs_reports',data);
+        
+        // 🆕 v8:自动记忆摄影师(去重保存到 settings)
+        if(data.assignedPhotographer){
+          const newHist = [...new Set([data.assignedPhotographer, ...photographerHistory])].slice(0,50);
+          if(JSON.stringify(newHist)!==JSON.stringify(photographerHistory)){
+            await DataStore.put('settings',{id:'photographers',value:newHist,updatedAt:Date.now()});
+          }
+        }
+        // 🆕 v8:自动记忆自定义场景(只记不在固定 6 项里的)
+        const fixedScenes=DEFAULT_SCENES.slice(0,6);  // 前 6 项是固定
+        if(data.scene && !fixedScenes.includes(data.scene) && data.scene!=='其他(自定义)'){
+          const newScenes=[...new Set([data.scene, ...customSceneHistory])].slice(0,30);
+          if(JSON.stringify(newScenes)!==JSON.stringify(customSceneHistory)){
+            await DataStore.put('settings',{id:'scenes',value:newScenes,updatedAt:Date.now()});
+          }
+        }
+        
         Logger.log(isEdit?'cs_edit':'cs_new',`${isEdit?'编辑':'新增'}客资 ${name} ${data.status}`);
         Toast.success(`✅ ${isEdit?'已更新':'已保存'}`);
         this.refresh();
@@ -5279,28 +6200,57 @@ const CustomerServiceModule = {
         console.error('[CS]',e);return false;
       }
     });
+    
+    // 🆕 v8:场景下拉选中"其他"时自动展示自定义输入框
+    setTimeout(()=>{
+      const sceneSel=$('#csScene');
+      const customInput=$('#csSceneCustom');
+      if(sceneSel && customInput){
+        sceneSel.addEventListener('change',()=>{
+          customInput.style.display = sceneSel.value==='其他(自定义)' ? 'block' : 'none';
+          if(sceneSel.value==='其他(自定义)')customInput.focus();
+        });
+      }
+    },50);
   },
 
   // 一键状态流转(替代旧的 markDeal/markCancel)
   async markStatus(id, newStatus){
     const r=await DataStore.get('cs_reports',id);
     if(!r){Toast.error('记录不存在');return}
+    
+    // 🆕 v6:成交时弹出消费录入框
+    if(newStatus==='deal' && !r.totalAmount){
+      this.openDealEditor(r);
+      return;
+    }
+    
     const oldStatus=r.status;
     r.status=newStatus;
     r.updatedAt=Date.now();
     
     // 状态相关时间戳
     if(newStatus==='arrived' && !r.arrivedAt)r.arrivedAt=Date.now();
-    if(newStatus==='deal' && !r.dealAt)r.dealAt=Date.now();
+    if(newStatus==='deal' && !r.dealAt){
+      r.dealAt=Date.now();
+      // 🆕 v6:摄影订单自动启动 7 天回片倒计时
+      if(r.withPhoto){
+        const shoot=r.shootDate||r.bookingDate||today();
+        r.shootDate=shoot;
+        const dl=new Date(shoot);
+        dl.setDate(dl.getDate()+PHOTO_DELIVERY_DAYS);
+        r.deliveryDeadline=dl.toISOString().slice(0,10);
+        r.delivered=false;
+      }
+    }
     
     await DataStore.put('cs_reports',r);
     
-    // 状态对应的 toast 消息
     const msgs={
       booked:'🔵 已记录定金预约',
       direct:'🌊 已记录直接来客户',
       arrived:`✓ ${r.customerName} 已到店`,
-      deal:`🎉 ${r.customerName} 已成交!提成 ¥${r.withPhoto?PHOTO_COMMISSION:MAKEUP_COMMISSION}`,
+      deal:`🎉 ${r.customerName} 已成交`,
       noshow:`已标记 ${r.customerName} 未到店`,
       cancel:`已标记 ${r.customerName} 取消`
     };
@@ -5309,7 +6259,208 @@ const CustomerServiceModule = {
     this.refresh();
   },
 
-  // 兼容旧入口(防止其他地方仍在调用)
+  // 🆕 v6:成交消费录入框
+  openDealEditor(rec){
+    const r={...rec};
+    // 默认根据 withPhoto 推荐套系组
+    const defaultGroup = r.withPhoto?'set_premium':'single_makeup';
+    const curGroup = r._dealGroup || defaultGroup;
+    const curItem = r.packageItem || '';
+    const curAmount = r.packageAmount || 0;
+    const curExtras = r.extras || [];
+    
+    Modal.open('🎉 成交录入 · '+escapeHtml(r.customerName||''),`
+      <div style="line-height:1.7">
+        <div style="padding:10px;background:var(--c-cream);border-radius:6px;margin-bottom:14px;font-size:13px">
+          <div><strong>客户:</strong>${escapeHtml(r.customerName||'')} · ${escapeHtml(r.phone||'')}</div>
+          <div style="color:var(--c-muted);margin-top:4px">服务类型:${r.withPhoto?'妆造+摄影':'纯妆造'} · 共 ${(r.women||0)+(r.men||0)+(r.girls||0)+(r.boys||0)} 人</div>
+        </div>
+
+        <div class="form-item"><label class="form-label required">📦 选择套系</label>
+          <select class="form-select" id="dealGroup">
+            ${Object.entries(PACKAGES).map(([k,v])=>`<option value="${k}" ${k===curGroup?'selected':''}>${v.name}${v.desc?' · '+v.desc:''}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="form-item" style="margin-top:10px" id="dealItemWrap">
+          <label class="form-label required">具体规格</label>
+          <select class="form-select" id="dealItem">
+            <option value="">(请选择)</option>
+            ${(PACKAGES[curGroup]?.items||[]).map(it=>`<option value="${it.key}" data-amount="${it.amount}" ${it.key===curItem?'selected':''}>${it.name} · ¥${it.amount}</option>`).join('')}
+          </select>
+        </div>
+
+        <div class="form-item" style="margin-top:10px" id="dealCustomWrap" style="display:none">
+          <label class="form-label">自定义套系金额</label>
+          <input type="number" class="form-input" id="dealCustomAmt" min="0" step="1" value="${curAmount||''}" placeholder="若选完全自定义,在这里直接填总额">
+        </div>
+
+        <div class="form-item" style="margin-top:14px">
+          <label class="form-label">➕ 加项(临时加照片/加妆造等,可加多条)</label>
+          <div id="dealExtras" style="margin-top:6px"></div>
+          <button class="btn btn-sm btn-outline" data-action="cs-add-extra" style="margin-top:6px;font-size:12px">+ 添加一项</button>
+        </div>
+
+        <div style="margin-top:14px;padding:14px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:2px solid var(--c-gold);border-radius:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:13px;color:var(--c-muted)">最终成交总额</span>
+            <span id="dealTotal" style="font-family:var(--font-num);font-size:28px;font-weight:700;color:var(--c-primary)">¥0</span>
+          </div>
+          <div style="font-size:11px;color:var(--c-muted);margin-top:4px" id="dealBreakdown"></div>
+        </div>
+
+        ${r.withPhoto?`<div style="margin-top:10px;padding:10px;background:#E0F2FE;border-radius:6px;font-size:12px;line-height:1.7">
+          📷 <strong>摄影订单</strong>:成交后自动启动 7 天回片倒计时(${(r.bookingDate||today())} → 截止 ${(d=>{const x=new Date(d);x.setDate(x.getDate()+7);return x.toISOString().slice(0,10)})(r.bookingDate||today())})
+        </div>`:''}
+      </div>
+    `,async()=>{
+      try{
+        const total=parseFloat($('#dealTotal').textContent.replace(/[^\d.]/g,''))||0;
+        if(total<=0){Toast.error('请选择套系或填写自定义金额');return false}
+        const group=$('#dealGroup').value;
+        const itemKey=$('#dealItem')?.value||'';
+        const item=(PACKAGES[group]?.items||[]).find(x=>x.key===itemKey);
+        const customAmt=parseFloat($('#dealCustomAmt')?.value)||0;
+        const packageAmount=group==='custom'?customAmt:(item?item.amount:0);
+        
+        const data={
+          ...rec,
+          status:'deal',
+          dealAt:Date.now(),
+          updatedAt:Date.now(),
+          // 订单消费明细
+          packageType:group,
+          packageItem:itemKey,
+          packageName:item?item.name:(group==='custom'?'自定义':''),
+          packageAmount,
+          extras:this._dealExtrasState||[],
+          totalAmount:total
+        };
+        // 摄影订单启动监控
+        if(rec.withPhoto){
+          const shoot=rec.shootDate||rec.bookingDate||today();
+          data.shootDate=shoot;
+          const dl=new Date(shoot);
+          dl.setDate(dl.getDate()+PHOTO_DELIVERY_DAYS);
+          data.deliveryDeadline=dl.toISOString().slice(0,10);
+          data.delivered=false;
+        }
+        await DataStore.put('cs_reports',data);
+        Logger.log('cs_deal',`${rec.customerName} 成交 ¥${total} (${data.packageName})`);
+        Toast.success(`🎉 成交录入完成,总额 ¥${total}`);
+        this._dealExtrasState=null;
+        this.refresh();
+      }catch(e){
+        Toast.error('保存失败:'+e.message);
+        return false;
+      }
+    });
+    
+    // 初始化加项状态
+    this._dealExtrasState=[...curExtras];
+    this._renderDealExtras();
+    this._updateDealTotal();
+    
+    // 绑定套系组切换
+    setTimeout(()=>{
+      const grpEl=$('#dealGroup');
+      if(grpEl){
+        grpEl.addEventListener('change',e=>{
+          const g=e.target.value;
+          const itemSel=$('#dealItem');
+          const itemWrap=$('#dealItemWrap');
+          const customWrap=$('#dealCustomWrap');
+          if(g==='custom'){
+            itemWrap.style.display='none';
+            customWrap.style.display='block';
+          }else{
+            itemWrap.style.display='block';
+            customWrap.style.display='none';
+            const items=PACKAGES[g]?.items||[];
+            itemSel.innerHTML='<option value="">(请选择)</option>'+items.map(it=>`<option value="${it.key}" data-amount="${it.amount}">${it.name} · ¥${it.amount}</option>`).join('');
+          }
+          this._updateDealTotal();
+        });
+      }
+      const itemEl=$('#dealItem');
+      if(itemEl)itemEl.addEventListener('change',()=>this._updateDealTotal());
+      const customEl=$('#dealCustomAmt');
+      if(customEl)customEl.addEventListener('input',()=>this._updateDealTotal());
+      // 初始化:如果是 custom 显示自定义
+      if(curGroup==='custom'){
+        $('#dealItemWrap').style.display='none';
+        $('#dealCustomWrap').style.display='block';
+      }
+    },50);
+  },
+
+  _renderDealExtras(){
+    const wrap=$('#dealExtras');
+    if(!wrap)return;
+    const list=this._dealExtrasState||[];
+    if(list.length===0){
+      wrap.innerHTML='<div style="font-size:12px;color:var(--c-muted);padding:6px 0">暂无加项</div>';
+      return;
+    }
+    wrap.innerHTML=list.map((e,i)=>`
+      <div style="display:grid;grid-template-columns:1.5fr 1fr auto;gap:6px;margin-bottom:4px">
+        <input class="form-input" placeholder="如:加单人精修10张" value="${escapeHtml(e.desc||'')}" data-extra-field="desc" data-i="${i}" style="font-size:13px;padding:6px 8px">
+        <input type="number" class="form-input" placeholder="金额" value="${e.amount||''}" data-extra-field="amount" data-i="${i}" style="font-size:13px;padding:6px 8px" min="0" step="1">
+        <button class="btn btn-sm btn-ghost" data-action="cs-rm-extra" data-i="${i}" style="color:var(--c-danger);padding:4px 10px">×</button>
+      </div>
+    `).join('');
+    // 绑定回写
+    wrap.querySelectorAll('[data-extra-field]').forEach(el=>{
+      el.addEventListener('input',ev=>{
+        const f=ev.target.dataset.extraField, i=parseInt(ev.target.dataset.i);
+        if(this._dealExtrasState[i]){
+          this._dealExtrasState[i][f]=f==='amount'?(parseFloat(ev.target.value)||0):ev.target.value;
+          this._updateDealTotal();
+        }
+      });
+    });
+  },
+
+  addDealExtra(){
+    if(!this._dealExtrasState)this._dealExtrasState=[];
+    this._dealExtrasState.push({desc:'',amount:0});
+    this._renderDealExtras();
+    this._updateDealTotal();
+  },
+
+  rmDealExtra(i){
+    if(this._dealExtrasState && this._dealExtrasState[i]!==undefined){
+      this._dealExtrasState.splice(i,1);
+      this._renderDealExtras();
+      this._updateDealTotal();
+    }
+  },
+
+  _updateDealTotal(){
+    const totEl=$('#dealTotal');
+    const breakEl=$('#dealBreakdown');
+    if(!totEl)return;
+    const group=$('#dealGroup')?.value;
+    let pkgAmt=0, pkgName='';
+    if(group==='custom'){
+      pkgAmt=parseFloat($('#dealCustomAmt')?.value)||0;
+      pkgName='自定义';
+    }else{
+      const itemKey=$('#dealItem')?.value;
+      const item=(PACKAGES[group]?.items||[]).find(x=>x.key===itemKey);
+      if(item){pkgAmt=item.amount; pkgName=item.name}
+    }
+    const extras=this._dealExtrasState||[];
+    const extraSum=extras.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
+    const total=pkgAmt+extraSum;
+    totEl.textContent='¥'+total;
+    const parts=[];
+    if(pkgName)parts.push(`套系${pkgName} ¥${pkgAmt}`);
+    extras.forEach(e=>{if(e.desc||e.amount)parts.push(`${e.desc||'加项'} ¥${e.amount||0}`)});
+    breakEl.textContent=parts.join(' + ')||'(请选择套系或填写金额)';
+  },
+
+  // 兼容旧入口
   async markDeal(id){return this.markStatus(id,'deal')},
   async markCancel(id){
     const r=await DataStore.get('cs_reports',id);
@@ -5317,6 +6468,833 @@ const CustomerServiceModule = {
     Modal.open('确认取消?',`<div style="line-height:1.85;padding:8px 0">确认将 <strong>${escapeHtml(r.customerName)}</strong> 标记为已取消?<br><div style="color:var(--c-muted);font-size:13px;margin-top:8px">数据保留,只是不计入转化率分子</div></div>`,async()=>{
       this.markStatus(id,'cancel');
     });
+  },
+
+  // 🆕 v6:标记照片已交付
+  async markDelivered(id){
+    const r=await DataStore.get('cs_reports',id);
+    if(!r)return;
+    r.delivered=true;
+    r.deliveredAt=Date.now();
+    r.updatedAt=Date.now();
+    await DataStore.put('cs_reports',r);
+    Logger.log('photo_deliver',`${r.customerName} 照片交付`);
+    Toast.success(`✅ ${r.customerName} 照片已交付`);
+    this.refresh();
+  },
+
+  // 🆕 v6:订单详情(查看消费明细 + 客诉记录入口)
+  async showOrderDetail(id){
+    const r=await DataStore.get('cs_reports',id);
+    if(!r){Toast.error('记录不存在');return}
+    const isPhoto=!!r.withPhoto;
+    const dl=r.deliveryDeadline;
+    let photoStatus='';
+    if(isPhoto && r.status==='deal'){
+      if(r.delivered){
+        photoStatus=`<div style="padding:10px;background:#D4EDDA;border-radius:6px;margin-top:10px">✅ 照片已于 ${new Date(r.deliveredAt).toLocaleDateString('zh-CN')} 交付</div>`;
+      }else if(dl){
+        const today_=today();
+        const daysLeft=Math.ceil((new Date(dl)-new Date(today_))/86400000);
+        if(daysLeft<0){
+          photoStatus=`<div style="padding:10px;background:#FEE2E2;color:#991b1b;border-radius:6px;margin-top:10px;font-weight:600">⚠️ 已超时 ${-daysLeft} 天 · 截止日期 ${dl}</div>`;
+        }else if(daysLeft<=2){
+          photoStatus=`<div style="padding:10px;background:#FEF3C7;color:#b45309;border-radius:6px;margin-top:10px;font-weight:600">🟡 剩 ${daysLeft} 天截止 (${dl})</div>`;
+        }else{
+          photoStatus=`<div style="padding:10px;background:#E0F2FE;border-radius:6px;margin-top:10px">📷 摄影中 · 还有 ${daysLeft} 天截止 (${dl})</div>`;
+        }
+      }
+    }
+    
+    const complaints=r.complaints||[];
+    const hasUnresolvedHigh=complaints.some(c=>c.level==='high'&&c.status!=='resolved');
+    
+    Modal.open('📋 订单详情',`
+      <div style="line-height:1.7">
+        <div style="padding:14px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border-radius:8px;border:1px solid var(--c-gold)">
+          <div style="font-size:16px;font-weight:700">${escapeHtml(r.customerName||'')}</div>
+          <div style="font-size:13px;color:var(--c-muted);margin-top:4px">📞 ${escapeHtml(r.phone||'-')} · ${escapeHtml(r.bookingDate||'')} ${escapeHtml(r.bookingTime||'')}</div>
+        </div>
+
+        ${r.totalAmount?`
+        <div style="margin-top:14px;padding:12px;background:var(--c-cream);border-radius:8px">
+          <div style="font-size:13px;color:var(--c-muted);margin-bottom:8px">💰 消费明细</div>
+          ${r.packageName?`<div class="salary-line"><span>套系:${escapeHtml(r.packageName)}</span><strong>¥${r.packageAmount||0}</strong></div>`:''}
+          ${(r.extras||[]).map(e=>`<div class="salary-line"><span>${escapeHtml(e.desc||'加项')}</span><strong>¥${e.amount||0}</strong></div>`).join('')}
+          <div class="salary-line" style="border-top:1px solid var(--c-border);margin-top:8px;padding-top:8px"><span><strong>成交总额</strong></span><strong style="color:var(--c-primary);font-size:18px">¥${r.totalAmount}</strong></div>
+        </div>
+        `:''}
+
+        ${photoStatus}
+
+        ${hasUnresolvedHigh?`<div style="margin-top:10px;padding:10px;background:#FEE2E2;border:2px solid #dc2626;border-radius:6px;font-weight:600;color:#991b1b">⚠️ 有未解决的高级客诉,该订单提成暂停结算</div>`:''}
+
+        <div style="margin-top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <strong style="font-size:14px">📞 客诉记录 (${complaints.length})</strong>
+            <button class="btn btn-sm btn-outline" data-action="cs-add-complaint" data-id="${r.id}" style="font-size:12px">+ 登记客诉</button>
+          </div>
+          ${complaints.length===0?'<div style="color:var(--c-muted);font-size:13px;padding:8px">暂无客诉记录</div>':complaints.map((c,i)=>{
+            const lvl=COMPLAINT_LEVELS[c.level]||COMPLAINT_LEVELS.low;
+            const cat=(COMPLAINT_CATEGORIES[c.category]||{}).name||'其他';
+            const stat=COMPLAINT_STATUSES[c.status]||COMPLAINT_STATUSES.pending;
+            return `<div style="padding:10px;background:var(--c-cream);border-radius:6px;margin-bottom:6px;border-left:4px solid ${lvl.color}">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+                <div>
+                  <span style="color:${lvl.color};font-weight:600">${lvl.name}</span>
+                  · <span>${escapeHtml(cat)}</span>
+                  · <span style="color:${stat.color}">${stat.name}</span>
+                </div>
+                <button class="btn btn-sm btn-ghost" data-action="cs-edit-complaint" data-id="${r.id}" data-i="${i}" style="font-size:11px;padding:2px 8px">编辑</button>
+              </div>
+              <div style="font-size:13px;margin-top:4px">${escapeHtml(c.desc||'')}</div>
+              ${c.followUp?`<div style="font-size:12px;color:var(--c-muted);margin-top:4px">回访: ${escapeHtml(c.followUp)}</div>`:''}
+              ${c.resolution?`<div style="font-size:12px;color:var(--c-success);margin-top:4px">处理: ${escapeHtml(c.resolution)}</div>`:''}
+              <div style="font-size:11px;color:var(--c-muted);margin-top:4px">${escapeHtml(c.by||'')} · ${new Date(c.createdAt).toLocaleString('zh-CN')}</div>
+            </div>`;
+          }).join('')}
+        </div>
+
+        ${isPhoto && r.status==='deal' && !r.delivered?`<div style="margin-top:14px;text-align:right">
+          <button class="btn btn-primary" data-action="cs-mark-delivered" data-id="${r.id}">📤 标记照片已交付</button>
+        </div>`:''}
+      </div>
+    `,null);
+  },
+
+  // 🆕 v6:登记客诉
+  addComplaint(orderId){
+    this._editComplaint(orderId, null);
+  },
+
+  editComplaint(orderId, idx){
+    this._editComplaint(orderId, parseInt(idx));
+  },
+
+  async _editComplaint(orderId, idx){
+    const r=await DataStore.get('cs_reports',orderId);
+    if(!r){Toast.error('记录不存在');return}
+    const isEdit=idx!==null && idx!==undefined && !isNaN(idx);
+    const c=isEdit?r.complaints[idx]:{
+      id:uuid(),
+      level:'mid',
+      category:'service',
+      desc:'',followUp:'',resolution:'',
+      status:'pending',
+      createdAt:Date.now(),
+      by:Auth.current.name
+    };
+
+    Modal.open(isEdit?'✏️ 编辑客诉':'📝 登记客诉',`
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-item"><label class="form-label required">严重等级</label>
+          <select class="form-select" id="cpLevel">
+            ${Object.entries(COMPLAINT_LEVELS).map(([k,v])=>`<option value="${k}" ${k===c.level?'selected':''}>${v.name} · ${v.desc}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label required">原因分类</label>
+          <select class="form-select" id="cpCategory">
+            ${Object.entries(COMPLAINT_CATEGORIES).map(([k,v])=>`<option value="${k}" ${k===c.category?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-item" style="margin-top:10px">
+        <label class="form-label required">具体情况</label>
+        <textarea class="form-textarea" id="cpDesc" rows="3" placeholder="客户具体反映了什么问题">${escapeHtml(c.desc||'')}</textarea>
+      </div>
+
+      <div class="form-item" style="margin-top:10px">
+        <label class="form-label">📞 回访情况</label>
+        <textarea class="form-textarea" id="cpFollowUp" rows="2" placeholder="如: 5月3日 张店长 微信回访,客户表示...">${escapeHtml(c.followUp||'')}</textarea>
+      </div>
+
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <div class="form-item"><label class="form-label">处理结果</label>
+          <select class="form-select" id="cpResolution">
+            <option value="">(未处理)</option>
+            ${COMPLAINT_RESOLUTIONS.map(r=>`<option value="${r}" ${r===c.resolution?'selected':''}>${r}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-item"><label class="form-label required">当前状态</label>
+          <select class="form-select" id="cpStatus">
+            ${Object.entries(COMPLAINT_STATUSES).map(([k,v])=>`<option value="${k}" ${k===c.status?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7;color:var(--c-ink-2)">
+        💡 <strong>状态联动</strong>:如果选"高 + 待处理/跟进中",该订单提成会暂停结算,直到状态改为"已处理并满意"。
+      </div>
+    `,async()=>{
+      try{
+        const data={
+          ...c,
+          level:$('#cpLevel').value,
+          category:$('#cpCategory').value,
+          desc:$('#cpDesc').value.trim(),
+          followUp:$('#cpFollowUp').value.trim(),
+          resolution:$('#cpResolution').value,
+          status:$('#cpStatus').value,
+          updatedAt:Date.now()
+        };
+        if(data.status==='resolved' && !data.resolvedAt)data.resolvedAt=Date.now();
+        if(!data.desc){Toast.error('请填写具体情况');return false}
+        
+        if(!r.complaints)r.complaints=[];
+        if(isEdit){r.complaints[idx]=data}
+        else{r.complaints.push(data)}
+        r.hasComplaint=true;
+        r.updatedAt=Date.now();
+        
+        await DataStore.put('cs_reports',r);
+        Logger.log(isEdit?'complaint_edit':'complaint_add',`${r.customerName} 客诉 ${data.level}/${data.status}`);
+        Toast.success('✅ 客诉已'+(isEdit?'更新':'登记'));
+        this.refresh();
+        // 重新打开订单详情
+        setTimeout(()=>this.showOrderDetail(orderId),200);
+      }catch(e){
+        Toast.error('保存失败:'+e.message);
+        return false;
+      }
+    });
+  }
+};
+
+
+/* ============ 🆕 v6 OrderModule 摄影回片监控 ============ */
+const OrderModule = {
+  curView:'pending', // pending | delivered | overdue | all
+
+  async refresh(){
+    const u=Auth.current;
+    if(!u){return}
+    const isAdmin=u.role==='admin';
+    if(!isAdmin && (LEVELS[u.level]||{}).type!=='customer'){
+      $('#ordersContent').innerHTML='<div class="card"><div style="text-align:center;padding:30px;color:var(--c-muted)">本页仅店长与客服可见</div></div>';
+      return;
+    }
+    
+    const all=await DataStore.all('cs_reports');
+    // 只关心:已成交 + 摄影订单
+    const photoOrders=all.filter(r=>r.status==='deal' && r.withPhoto);
+    const td=today();
+    
+    // 分类
+    const overdue=[], warn=[], normal=[], delivered=[];
+    photoOrders.forEach(r=>{
+      if(r.delivered){delivered.push(r);return}
+      const dl=r.deliveryDeadline;
+      if(!dl){normal.push(r);return}
+      const daysLeft=Math.ceil((new Date(dl)-new Date(td))/86400000);
+      const daysFromShoot=Math.ceil((new Date(td)-new Date(r.shootDate||r.bookingDate))/86400000);
+      if(daysLeft<0)overdue.push({...r,_daysLeft:daysLeft,_daysFromShoot:daysFromShoot});
+      else if(daysFromShoot>=PHOTO_WARNING_DAYS)warn.push({...r,_daysLeft:daysLeft,_daysFromShoot:daysFromShoot});
+      else normal.push({...r,_daysLeft:daysLeft,_daysFromShoot:daysFromShoot});
+    });
+    
+    const view=this.curView;
+    let list=[];
+    if(view==='pending')list=[...overdue,...warn,...normal];
+    else if(view==='overdue')list=overdue;
+    else if(view==='delivered')list=delivered;
+    else list=photoOrders;
+    
+    list.sort((a,b)=>{
+      const aDeadline=a.deliveryDeadline||'9999';
+      const bDeadline=b.deliveryDeadline||'9999';
+      return aDeadline.localeCompare(bDeadline);
+    });
+    
+    const tabs=[
+      {key:'pending',  name:`📷 进行中(${overdue.length+warn.length+normal.length})`},
+      {key:'overdue',  name:`🔴 超时(${overdue.length})`},
+      {key:'delivered',name:`✅ 已交付(${delivered.length})`},
+      {key:'all',      name:`全部(${photoOrders.length})`}
+    ];
+    
+    const userMap={};
+    (await DataStore.all('users')).forEach(u=>{userMap[u.id]=u.name});
+    
+    $('#ordersContent').innerHTML=`
+      <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">📷 摄影回片监控</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px">
+          7 天回片倒计时 · 第 5 天黄色提醒 · 超 7 天红色超时(挂钩摄影师月底薪资)
+        </div>
+      </div>
+
+      <div class="overview-grid" style="margin-top:14px">
+        <div class="stat-card" style="background:linear-gradient(135deg,#FEE2E2,#fff)">
+          <div class="stat-card-label">🔴 超时未交</div>
+          <div class="stat-card-value" style="color:#dc2626">${overdue.length}</div>
+          <div class="stat-card-extra">挂钩薪资扣款</div>
+        </div>
+        <div class="stat-card" style="background:linear-gradient(135deg,#FEF3C7,#fff)">
+          <div class="stat-card-label">🟡 临近截止</div>
+          <div class="stat-card-value" style="color:#b45309">${warn.length}</div>
+          <div class="stat-card-extra">需立即跟进</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">📷 进行中</div>
+          <div class="stat-card-value">${normal.length}</div>
+          <div class="stat-card-extra">还在 5 天内</div>
+        </div>
+        <div class="stat-card" style="background:linear-gradient(135deg,#D4EDDA,#fff)">
+          <div class="stat-card-label">✅ 已交付</div>
+          <div class="stat-card-value" style="color:#15803d">${delivered.length}</div>
+          <div class="stat-card-extra">完成订单</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+          ${tabs.map(t=>`<button class="btn btn-sm ${t.key===view?'btn-primary':'btn-outline'}" data-action="orders-view" data-key="${t.key}">${t.name}</button>`).join('')}
+          <div style="flex:1"></div>
+          <button class="btn btn-sm btn-outline" data-action="orders-export">📥 导出 CSV</button>
+        </div>
+        ${list.length===0?'<div style="text-align:center;padding:30px;color:var(--c-muted)">暂无订单</div>':list.map(r=>{
+          const dl=r.deliveryDeadline;
+          const daysLeft=r._daysLeft;
+          let badge='';
+          if(r.delivered){
+            badge=`<span style="padding:3px 10px;background:#D4EDDA;color:#15803d;border-radius:12px;font-size:12px;font-weight:600">✅ 已交付</span>`;
+          }else if(daysLeft<0){
+            badge=`<span style="padding:3px 10px;background:#FEE2E2;color:#991b1b;border-radius:12px;font-size:12px;font-weight:600">🔴 超时 ${-daysLeft} 天</span>`;
+          }else if(daysLeft<=2){
+            badge=`<span style="padding:3px 10px;background:#FEF3C7;color:#b45309;border-radius:12px;font-size:12px;font-weight:600">🟡 剩 ${daysLeft} 天</span>`;
+          }else{
+            badge=`<span style="padding:3px 10px;background:#E0F2FE;color:#1e40af;border-radius:12px;font-size:12px;font-weight:600">📷 进行中</span>`;
+          }
+          const photoName=r.assignedPhotographer?(userMap[r.assignedPhotographer]||r.assignedPhotographer):'未指派';
+          return `
+            <div class="card" style="margin-bottom:8px;border-left:4px solid ${daysLeft<0&&!r.delivered?'#dc2626':daysLeft<=2&&!r.delivered?'#f59e0b':r.delivered?'#10b981':'var(--c-border)'};cursor:pointer" data-action="orders-detail" data-id="${r.id}">
+              <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+                <div style="flex:1;min-width:180px">
+                  <div style="font-weight:600">${escapeHtml(r.customerName||'')} · ¥${r.totalAmount||0}</div>
+                  <div style="font-size:12px;color:var(--c-muted);margin-top:4px">
+                    📅 拍摄 ${escapeHtml(r.shootDate||r.bookingDate||'-')} · 截止 ${escapeHtml(dl||'-')}<br>
+                    📷 摄影师: ${escapeHtml(photoName)} · ${escapeHtml(r.scene||'-')}
+                  </div>
+                </div>
+                <div style="text-align:right">
+                  ${badge}
+                  ${!r.delivered?`<div style="margin-top:6px"><button class="btn btn-sm btn-primary" data-action="orders-delivered" data-id="${r.id}" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 10px">📤 交付</button></div>`:''}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  },
+
+  switchView(key){this.curView=key; this.refresh()},
+
+  async markDelivered(id){
+    return CustomerServiceModule.markDelivered(id);
+  },
+
+  async exportCsv(){
+    const all=await DataStore.all('cs_reports');
+    const orders=all.filter(r=>r.status==='deal' && r.withPhoto);
+    if(orders.length===0){Toast.error('没有数据');return}
+    const userMap={};
+    (await DataStore.all('users')).forEach(u=>{userMap[u.id]=u.name});
+    const rows=[
+      ['客户','电话','拍摄日期','截止日期','摄影师','场景','成交金额','状态','交付时间']
+    ];
+    orders.forEach(r=>{
+      const photoName=r.assignedPhotographer?(userMap[r.assignedPhotographer]||r.assignedPhotographer):'';
+      const status=r.delivered?'已交付':(r.deliveryDeadline && r.deliveryDeadline<today()?'超时':'进行中');
+      rows.push([
+        r.customerName||'',
+        r.phone||'',
+        r.shootDate||r.bookingDate||'',
+        r.deliveryDeadline||'',
+        photoName,
+        r.scene||'',
+        r.totalAmount||0,
+        status,
+        r.deliveredAt?new Date(r.deliveredAt).toLocaleString('zh-CN'):''
+      ]);
+    });
+    const fn=`摄影订单_${today()}.csv`;
+    const BOM='\uFEFF';
+    const csv=BOM+rows.map(r=>r.map(c=>{
+      const s=String(c==null?'':c);
+      return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+    }).join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=fn;a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+    Toast.success(`✅ 已导出 ${orders.length} 条`);
+  }
+};
+
+
+/* ============ 🆕 v6 ComplaintModule 客诉管理 ============ */
+const ComplaintModule = {
+  filterMonth: 'all',
+  filterCategory: 'all',
+  filterLevel: 'all',
+  filterStatus: 'all',
+
+  async refresh(){
+    const u=Auth.current;
+    if(!u||u.role!=='admin'){
+      $('#complaintsContent').innerHTML='<div class="card"><div style="text-align:center;padding:30px;color:var(--c-muted)">本页仅店长可见</div></div>';
+      return;
+    }
+    
+    const all=await DataStore.all('cs_reports');
+    // 把所有 complaints 摊平成一维数组,带上 order 引用
+    const flat=[];
+    all.forEach(r=>{
+      (r.complaints||[]).forEach((c,i)=>{
+        flat.push({...c, _order:r, _idx:i});
+      });
+    });
+    
+    // 应用筛选
+    let filtered=flat;
+    const fm=this.filterMonth, fc=this.filterCategory, fl=this.filterLevel, fs=this.filterStatus;
+    if(fm!=='all'){
+      filtered=filtered.filter(c=>{
+        const d=new Date(c.createdAt).toISOString().slice(0,7);
+        return d===fm;
+      });
+    }
+    if(fc!=='all')filtered=filtered.filter(c=>c.category===fc);
+    if(fl!=='all')filtered=filtered.filter(c=>c.level===fl);
+    if(fs!=='all')filtered=filtered.filter(c=>c.status===fs);
+    
+    filtered.sort((a,b)=>b.createdAt-a.createdAt);
+    
+    // 高级未解决置顶
+    const high=filtered.filter(c=>c.level==='high'&&c.status!=='resolved');
+    const others=filtered.filter(c=>!(c.level==='high'&&c.status!=='resolved'));
+    const sorted=[...high,...others];
+    
+    // 月份选项
+    const monthOpts=[];
+    const d=new Date();
+    for(let i=0;i<12;i++){
+      const m=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      monthOpts.push(m);
+      d.setMonth(d.getMonth()-1);
+    }
+    
+    // 统计
+    const stats={
+      total: flat.length,
+      pending: flat.filter(c=>c.status==='pending').length,
+      following: flat.filter(c=>c.status==='following').length,
+      resolved: flat.filter(c=>c.status==='resolved').length,
+      high: flat.filter(c=>c.level==='high').length
+    };
+    
+    $('#complaintsContent').innerHTML=`
+      <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">📞 客诉管理</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px">
+          结构化原因分析 + 解决过程记录 + 一键导出 + 高级未解决暂停结算
+        </div>
+      </div>
+
+      <div class="overview-grid" style="margin-top:14px">
+        <div class="stat-card"><div class="stat-card-label">客诉总数</div><div class="stat-card-value">${stats.total}</div></div>
+        <div class="stat-card" style="background:linear-gradient(135deg,#FEE2E2,#fff)"><div class="stat-card-label">待处理</div><div class="stat-card-value" style="color:#dc2626">${stats.pending}</div></div>
+        <div class="stat-card" style="background:linear-gradient(135deg,#FEF3C7,#fff)"><div class="stat-card-label">跟进中</div><div class="stat-card-value" style="color:#b45309">${stats.following}</div></div>
+        <div class="stat-card" style="background:linear-gradient(135deg,#D4EDDA,#fff)"><div class="stat-card-label">已解决</div><div class="stat-card-value" style="color:#15803d">${stats.resolved}</div></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="card-title">🔍 筛选 / 复盘</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+          <select class="form-select" id="cpFilterMonth" style="font-size:13px">
+            <option value="all" ${fm==='all'?'selected':''}>全部月份</option>
+            ${monthOpts.map(m=>`<option value="${m}" ${fm===m?'selected':''}>${m}</option>`).join('')}
+          </select>
+          <select class="form-select" id="cpFilterCat" style="font-size:13px">
+            <option value="all" ${fc==='all'?'selected':''}>全部原因</option>
+            ${Object.entries(COMPLAINT_CATEGORIES).map(([k,v])=>`<option value="${k}" ${fc===k?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+          <select class="form-select" id="cpFilterLevel" style="font-size:13px">
+            <option value="all" ${fl==='all'?'selected':''}>全部等级</option>
+            ${Object.entries(COMPLAINT_LEVELS).map(([k,v])=>`<option value="${k}" ${fl===k?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+          <select class="form-select" id="cpFilterStatus" style="font-size:13px">
+            <option value="all" ${fs==='all'?'selected':''}>全部状态</option>
+            ${Object.entries(COMPLAINT_STATUSES).map(([k,v])=>`<option value="${k}" ${fs===k?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:12px;color:var(--c-muted)">筛出 <strong style="color:var(--c-primary)">${filtered.length}</strong>/${flat.length} 条</span>
+          <div style="flex:1"></div>
+          <button class="btn btn-sm btn-outline" data-action="complaints-export">📥 导出 CSV</button>
+        </div>
+      </div>
+
+      ${sorted.length===0?`
+        <div class="card" style="text-align:center;padding:40px;color:var(--c-muted)">
+          <div style="font-size:48px">😊</div>
+          <div style="margin-top:10px">没有符合筛选条件的客诉</div>
+        </div>
+      `:`
+        <div class="card">
+          ${sorted.slice(0,100).map(c=>{
+            const lvl=COMPLAINT_LEVELS[c.level]||COMPLAINT_LEVELS.low;
+            const cat=(COMPLAINT_CATEGORIES[c.category]||{}).name||'其他';
+            const stat=COMPLAINT_STATUSES[c.status]||COMPLAINT_STATUSES.pending;
+            const isHighUnresolved=c.level==='high'&&c.status!=='resolved';
+            return `<div style="padding:12px;background:${isHighUnresolved?'#FEE2E2':'var(--c-cream)'};border-left:4px solid ${lvl.color};border-radius:6px;margin-bottom:8px;cursor:pointer" data-action="complaints-edit" data-id="${c._order.id}" data-i="${c._idx}">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                <div>
+                  <strong style="color:${lvl.color}">${lvl.name}</strong>
+                  · <span>${escapeHtml(cat)}</span>
+                  · <span style="color:${stat.color}">${stat.name}</span>
+                  ${isHighUnresolved?'<span style="margin-left:6px;color:#991b1b;font-weight:600">⚠️ 暂停结算</span>':''}
+                </div>
+                <div style="font-size:12px;color:var(--c-muted)">${new Date(c.createdAt).toLocaleString('zh-CN')}</div>
+              </div>
+              <div style="margin-top:6px">
+                <strong>${escapeHtml(c._order.customerName||'')}</strong> · ${escapeHtml(c._order.phone||'')}
+                ${c._order.totalAmount?` · 订单 ¥${c._order.totalAmount}`:''}
+              </div>
+              <div style="font-size:13px;color:var(--c-ink-2);margin-top:4px">${escapeHtml(c.desc||'')}</div>
+              ${c.resolution?`<div style="font-size:12px;color:var(--c-success);margin-top:4px">→ ${escapeHtml(c.resolution)}</div>`:''}
+            </div>`;
+          }).join('')}
+          ${sorted.length>100?`<div style="text-align:center;color:var(--c-muted);padding:14px;font-size:13px">显示前 100 条,可导出 CSV 查看全部</div>`:''}
+        </div>
+      `}
+    `;
+    
+    // 绑定筛选
+    ['cpFilterMonth','cpFilterCat','cpFilterLevel','cpFilterStatus'].forEach(id=>{
+      const el=$('#'+id);
+      if(el)el.addEventListener('change',()=>this.applyFilters());
+    });
+  },
+  
+  applyFilters(){
+    this.filterMonth=$('#cpFilterMonth')?.value||'all';
+    this.filterCategory=$('#cpFilterCat')?.value||'all';
+    this.filterLevel=$('#cpFilterLevel')?.value||'all';
+    this.filterStatus=$('#cpFilterStatus')?.value||'all';
+    this.refresh();
+  },
+
+  switchView(){this.refresh()},
+
+  async openComplaint(orderId, idx){
+    return CustomerServiceModule._editComplaint(orderId, parseInt(idx));
+  },
+
+  async exportCsv(){
+    const all=await DataStore.all('cs_reports');
+    const flat=[];
+    all.forEach(r=>{(r.complaints||[]).forEach((c,i)=>{flat.push({...c,_order:r})})});
+    
+    // 应用当前筛选
+    let f=flat;
+    if(this.filterMonth!=='all')f=f.filter(c=>new Date(c.createdAt).toISOString().slice(0,7)===this.filterMonth);
+    if(this.filterCategory!=='all')f=f.filter(c=>c.category===this.filterCategory);
+    if(this.filterLevel!=='all')f=f.filter(c=>c.level===this.filterLevel);
+    if(this.filterStatus!=='all')f=f.filter(c=>c.status===this.filterStatus);
+    
+    if(f.length===0){Toast.error('没有数据');return}
+    
+    const rows=[
+      ['客户','电话','原因分类','严重等级','状态','具体情况','回访情况','处理结果','登记时间','解决时间','登记人','订单金额']
+    ];
+    f.forEach(c=>{
+      const lvl=(COMPLAINT_LEVELS[c.level]||{}).name||c.level;
+      const cat=(COMPLAINT_CATEGORIES[c.category]||{}).name||c.category;
+      const stat=(COMPLAINT_STATUSES[c.status]||{}).name||c.status;
+      rows.push([
+        c._order.customerName||'',
+        c._order.phone||'',
+        cat,
+        lvl,
+        stat,
+        c.desc||'',
+        c.followUp||'',
+        c.resolution||'',
+        c.createdAt?new Date(c.createdAt).toLocaleString('zh-CN'):'',
+        c.resolvedAt?new Date(c.resolvedAt).toLocaleString('zh-CN'):'',
+        c.by||'',
+        c._order.totalAmount||0
+      ]);
+    });
+    
+    const fn=`客诉记录_${this.filterMonth==='all'?'全部':this.filterMonth}_${today()}.csv`;
+    const BOM='\uFEFF';
+    const csv=BOM+rows.map(r=>r.map(c=>{
+      const s=String(c==null?'':c);
+      return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+    }).join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=fn;a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+    Logger.log('cp_export',`导出客诉 ${f.length} 条`);
+    Toast.success(`✅ 已导出 ${f.length} 条客诉`);
+  }
+};
+
+
+/* ============ 🆕 v7 SOPModule 门店 SOP 核验 ============ */
+const SOPModule = {
+  curDate: '',  // 默认今天
+  curUserId: '',
+  
+  async refresh(){
+    const u=Auth.current;
+    if(!u)return;
+    const isAdmin=u.role==='admin';
+    const td=today();
+    const date = this.curDate || td;
+    
+    // 普通员工只能看自己,店长可切换
+    const targetUserId = isAdmin ? (this.curUserId||u.id) : u.id;
+    
+    const allUsers=await DataStore.all('users');
+    const targetUser=allUsers.find(x=>x.id===targetUserId)||u;
+    
+    // 拉取该员工该日 SOP 记录
+    const allSop=await DataStore.all('sop_records');
+    const myDay=allSop.filter(r=>r.userId===targetUserId && r.date===date);
+    const recordMap={};
+    myDay.forEach(r=>recordMap[r.shift]=r);
+    
+    // 月度 SOP 统计(用于扣款预览)
+    const month=date.slice(0,7);
+    const myMonth=allSop.filter(r=>r.userId===targetUserId && r.date.startsWith(month));
+    const lateRecords=myMonth.filter(r=>r.late);
+    const monthFine=lateRecords.length*SOP_FINE_PER_SHIFT;
+    
+    // 头部
+    let html=`
+      <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">📋 门店 SOP 核验 · 品质流程</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+          按时勾选每个班次的检查项 · 早班开店前 10 分钟完成 · 晚班闭店后 5 分钟内完成<br>
+          连续 3 次同一项不达标 = 卫生制度处罚(每次 ¥3-5,累计不超月薪 5%)<br>
+          班次未在截止时间前 100% 完成 = 扣款 ¥${SOP_FINE_PER_SHIFT}/班次,自动汇入工资单
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div style="font-size:13px;color:var(--c-muted)">📅 日期:</div>
+        <input type="date" class="form-input" id="sopDate" value="${date}" max="${td}" style="width:auto;font-size:13px">
+        ${isAdmin?`
+          <div style="font-size:13px;color:var(--c-muted);margin-left:10px">👤 员工:</div>
+          <select class="form-select" id="sopUser" style="width:auto;font-size:13px;max-width:160px">
+            ${allUsers.filter(u=>u.active).map(u=>`<option value="${u.id}" ${u.id===targetUserId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}
+          </select>
+        `:''}
+        <div style="flex:1"></div>
+        <span style="font-size:12px;color:var(--c-muted)">本月已逾期 <strong style="color:#dc2626">${lateRecords.length}</strong> 班次 · 预计扣 <strong style="color:#dc2626">¥${monthFine}</strong></span>
+      </div>
+    `;
+    
+    // 三个班次卡片
+    Object.entries(SOP_SHIFTS).forEach(([shiftKey,shift])=>{
+      const rec=recordMap[shiftKey];
+      const items=shift.items;
+      const completed=rec?items.filter(it=>rec.items&&rec.items[it.key]).length:0;
+      const total=items.length;
+      const pct=Math.round(completed/total*100);
+      const isComplete = completed===total;
+      
+      // 计算是否已逾期
+      const now=new Date();
+      const todayDate=now.toISOString().slice(0,10);
+      const isToday=date===todayDate;
+      const isPast=date<todayDate;
+      const [h,m]=shift.deadline.split(':').map(Number);
+      const isOverdue = (isPast && !isComplete) 
+        || (isToday && !isComplete && (now.getHours()>h || (now.getHours()===h && now.getMinutes()>=m)));
+      
+      const editable = (date===todayDate || (isAdmin && date<=todayDate));
+      
+      const cardBg = isComplete?'linear-gradient(135deg,#D4EDDA,#fff)':isOverdue?'linear-gradient(135deg,#FEE2E2,#fff)':'linear-gradient(135deg,#FEF3C7,#fff)';
+      const borderColor = isComplete?'#10b981':isOverdue?'#dc2626':'#f59e0b';
+      
+      html+=`
+        <div class="card" style="margin-top:14px;background:${cardBg};border-left:4px solid ${borderColor}">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+            <div style="font-weight:700;font-size:15px">
+              ${shift.icon} ${shift.name}
+              <span style="font-size:12px;color:var(--c-muted);margin-left:6px">${shift.desc}</span>
+            </div>
+            <div>
+              ${isComplete?`<span style="padding:3px 10px;background:#D4EDDA;color:#15803d;border-radius:12px;font-size:12px;font-weight:600">✅ 已完成</span>`:
+                isOverdue?`<span style="padding:3px 10px;background:#FEE2E2;color:#991b1b;border-radius:12px;font-size:12px;font-weight:600">⚠️ 逾期</span>`:
+                `<span style="padding:3px 10px;background:#FEF3C7;color:#b45309;border-radius:12px;font-size:12px;font-weight:600">${completed}/${total} (${pct}%)</span>`}
+            </div>
+          </div>
+          
+          <div>
+            ${(()=>{
+              // 按 category 分组(60 项需要分组才不密集)
+              const grouped={};
+              items.forEach(it=>{
+                const cat=it.category||'其他';
+                if(!grouped[cat])grouped[cat]=[];
+                grouped[cat].push(it);
+              });
+              return Object.entries(grouped).map(([cat,its])=>{
+                const groupChecked=its.filter(it=>rec?.items?.[it.key]).length;
+                const groupTotal=its.length;
+                return `
+                  <div style="margin-bottom:8px">
+                    <div style="font-size:12px;font-weight:600;color:var(--c-primary);padding:6px 10px;background:rgba(139,21,21,0.06);border-radius:6px 6px 0 0;display:flex;justify-content:space-between;align-items:center">
+                      <span>📋 ${escapeHtml(cat)}</span>
+                      <span style="font-size:11px;color:${groupChecked===groupTotal?'#15803d':'var(--c-muted)'}">${groupChecked}/${groupTotal}</span>
+                    </div>
+                    ${its.map(item=>{
+                      const checked = rec?.items?.[item.key]?'checked':'';
+                      const role=item.role||'';
+                      return `<label style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:#fff;border-bottom:1px solid var(--c-border);margin-bottom:0;cursor:${editable?'pointer':'not-allowed'};${!editable?'opacity:0.7':''}">
+                        <input type="checkbox" 
+                          data-action="sop-toggle" 
+                          data-shift="${shiftKey}" 
+                          data-item="${item.key}"
+                          data-uid="${targetUserId}"
+                          data-date="${date}"
+                          ${checked} ${editable?'':'disabled'}
+                          style="width:18px;height:18px;cursor:${editable?'pointer':'not-allowed'};flex-shrink:0">
+                        <span style="font-size:13px;flex:1;${rec?.items?.[item.key]?'color:#15803d':''}">${escapeHtml(item.name)}</span>
+                        ${role?`<span style="font-size:10px;background:var(--c-cream);color:var(--c-ink-2);padding:2px 6px;border-radius:8px;flex-shrink:0">${escapeHtml(role)}</span>`:''}
+                      </label>`;
+                    }).join('')}
+                  </div>
+                `;
+              }).join('');
+            })()}
+          </div>
+          
+          ${rec?.completedAt?`<div style="font-size:11px;color:var(--c-muted);margin-top:8px;text-align:right">✅ 完成于 ${new Date(rec.completedAt).toLocaleString('zh-CN')}</div>`:''}
+        </div>
+      `;
+    });
+    
+    // 月度小结
+    if(myMonth.length>0){
+      html+=`
+        <div class="card" style="margin-top:14px">
+          <div class="card-title">📊 ${month} 月度 SOP 表现</div>
+          <table style="width:100%">
+            <thead><tr>
+              <th>日期</th><th>早班</th><th>巡检</th><th>晚班</th><th class="td-center">逾期班次</th>
+            </tr></thead>
+            <tbody>
+              ${[...new Set(myMonth.map(r=>r.date))].sort().reverse().slice(0,15).map(d=>{
+                const dayRec={morning:null,midday:null,evening:null};
+                myMonth.filter(r=>r.date===d).forEach(r=>dayRec[r.shift]=r);
+                let lateCnt=0;
+                const cell=(r,shiftKey)=>{
+                  if(!r)return '<span style="color:var(--c-muted)">-</span>';
+                  const total=SOP_SHIFTS[shiftKey].items.length;
+                  const done=Object.values(r.items||{}).filter(Boolean).length;
+                  if(r.late){lateCnt++;return `<span style="color:#dc2626">⚠️${done}/${total}</span>`}
+                  return done===total?`<span style="color:#15803d">✓</span>`:`<span style="color:#b45309">${done}/${total}</span>`;
+                };
+                const c1=cell(dayRec.morning,'morning');
+                const c2=cell(dayRec.midday,'midday');
+                const c3=cell(dayRec.evening,'evening');
+                return `<tr><td>${d}</td><td>${c1}</td><td>${c2}</td><td>${c3}</td><td class="td-center">${lateCnt>0?`<span style="color:#dc2626">${lateCnt}</span>`:'0'}</td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+    
+    $('#sopContent').innerHTML=html;
+    
+    // 绑定日期/员工切换
+    const dateEl=$('#sopDate');
+    if(dateEl)dateEl.addEventListener('change',e=>{
+      this.curDate=e.target.value;
+      this.refresh();
+    });
+    const userEl=$('#sopUser');
+    if(userEl)userEl.addEventListener('change',e=>{
+      this.curUserId=e.target.value;
+      this.refresh();
+    });
+  },
+  
+  // 切换 SOP 项
+  async toggleItem(targetEl){
+    const shift=targetEl.dataset.shift;
+    const item=targetEl.dataset.item;
+    const uid=targetEl.dataset.uid;
+    const date=targetEl.dataset.date;
+    const checked=targetEl.checked;
+    
+    if(!shift||!item||!uid||!date){
+      Toast.error('参数错误');
+      return;
+    }
+    
+    const recordId=`sop_${date}_${uid}_${shift}`;
+    let rec=await DataStore.get('sop_records',recordId);
+    if(!rec){
+      rec={
+        id:recordId,
+        date,
+        userId:uid,
+        shift,
+        items:{},
+        createdAt:Date.now()
+      };
+    }
+    if(!rec.items)rec.items={};
+    rec.items[item]=checked;
+    
+    // 检查是否全部完成
+    const total=SOP_SHIFTS[shift].items.length;
+    const done=Object.values(rec.items).filter(Boolean).length;
+    if(done===total && !rec.completedAt){
+      rec.completedAt=Date.now();
+      // 检查是否逾期
+      const [h,m]=SOP_SHIFTS[shift].deadline.split(':').map(Number);
+      const completeDate=new Date(rec.completedAt);
+      const completeTimeStr=completeDate.toISOString().slice(0,10);
+      if(completeTimeStr>date){
+        rec.late=true;  // 隔天才完成 → 逾期
+      }else if(completeTimeStr===date){
+        if(completeDate.getHours()>h || (completeDate.getHours()===h && completeDate.getMinutes()>=m)){
+          rec.late=true;
+        }else{
+          rec.late=false;
+        }
+      }else{
+        rec.late=false;
+      }
+    }else if(done<total){
+      rec.completedAt=null;
+      rec.late=null;
+    }
+    rec.updatedAt=Date.now();
+    
+    await DataStore.put('sop_records',rec);
+    Logger.log('sop_check',`SOP ${shift} ${item} ${checked?'✓':'✕'}`);
+    
+    if(done===total){
+      Toast.success(`✅ ${SOP_SHIFTS[shift].name} 已完成${rec.late?'(已逾期)':''}`);
+    }
+    
+    // 刷新视图(异步,避免立即刷打断用户)
+    setTimeout(()=>this.refresh(),300);
   }
 };
 
@@ -5452,9 +7430,10 @@ const TotalSalaryModule = {
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
     const csReports=await DataStore.all('cs_reports');
+    const sopAll=await DataStore.all('sop_records');
 
     const rows=users.map(u=>{
-      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
       return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
     });
 
@@ -5618,6 +7597,7 @@ const CloudModule = {
           ${cfg?`<button class="btn btn-outline" data-action="cloud-push">⬆️ 全量推送本地到云端(初次配置后必做)</button>`:''}
           ${queueLen>0?`<button class="btn btn-outline" data-action="cloud-flush" style="border-color:var(--c-gold);color:var(--c-gold-dark)">🔄 重试 ${queueLen} 条待同步</button>`:''}
           <button class="btn btn-ghost" data-action="cloud-show-sql">📋 查看建表 SQL</button>
+          <button class="btn btn-ghost" data-action="cloud-show-trash">🗑️ 回收站(误删恢复)</button>
           ${cfg?`<button class="btn btn-ghost" data-action="cloud-disconnect" style="color:var(--c-danger)">断开云端(回到纯本地模式)</button>`:''}
         </div>
       </div>
@@ -5997,6 +7977,64 @@ const CloudModule = {
     `,null);
   },
 
+  // 回收站(误删数据恢复)
+  showTrash(){
+    const trash=DataStore.getTrash();
+    const storeNames={
+      users:'员工账号',performance:'业绩记录',attendance:'签到记录',
+      leaves:'请假记录',summaries:'工作总结',settings:'系统设置',
+      inspirations:'灵感笔记',operation_logs:'操作日志',
+      learning_courses:'学习课程',cs_reports:'客资记录'
+    };
+    const items=trash.map((item,idx)=>{
+      const days=Math.floor((Date.now()-item.deletedAt)/86400000);
+      const remaining=30-days;
+      const detail=item.data.customerName||item.data.name||item.data.title||item.data.date||item.data.id;
+      return `
+        <div style="padding:10px;background:var(--c-cream);border-radius:6px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13px">${storeNames[item.store]||item.store}: ${escapeHtml(String(detail).slice(0,30))}</div>
+            <div style="font-size:11px;color:var(--c-muted);margin-top:2px">
+              删除于 ${new Date(item.deletedAt).toLocaleString('zh-CN')} · 由 ${escapeHtml(item.deletedBy)} · 还可恢复 ${remaining} 天
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" data-action="trash-restore" data-i="${idx}" style="font-size:11px;padding:4px 10px">↩️ 恢复</button>
+        </div>
+      `;
+    }).join('');
+    
+    Modal.open('🗑️ 回收站',`
+      <div style="line-height:1.7">
+        <div style="padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;color:var(--c-ink-2);margin-bottom:14px">
+          💡 误删的数据自动备份在此,保留 30 天可恢复。<br>
+          ⚠️ 回收站只在<strong>本设备本地</strong>,清空浏览器数据会一起清空。
+        </div>
+        ${trash.length===0?
+          `<div style="text-align:center;padding:30px;color:var(--c-muted)"><div style="font-size:48px">🗑️</div><div style="margin-top:10px">回收站是空的</div></div>`
+          : items
+        }
+      </div>
+    `,null);
+  },
+
+  async restoreFromTrash(idx){
+    Modal.open('↩️ 确认恢复',`
+      <div style="line-height:1.85;padding:8px 0">
+        将这条数据恢复到系统。<br>
+        <div style="color:var(--c-muted);font-size:13px;margin-top:8px">恢复后会自动同步到云端。</div>
+      </div>
+    `,async()=>{
+      const item=await DataStore.restoreFromTrash(idx);
+      if(item){
+        Toast.success('✅ 已恢复');
+        Logger.log('restore',`从回收站恢复 ${item.store}/${item.data.id}`);
+        this.showTrash();  // 刷新回收站
+      }else{
+        Toast.error('恢复失败');
+      }
+    });
+  },
+
   exportConfig(){
     const cfg=CloudSync.cfg;
     if(!cfg){Toast.error('请先配置云端');return}
@@ -6132,9 +8170,10 @@ const OverallModule = {
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
     const csReports=await DataStore.all('cs_reports');
+    const sopAll=await DataStore.all('sop_records');
     const month=currentMonth();
     const rows=users.map(u=>{
-      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
       const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
       return{u,s};
     }).sort((a,b)=>b.s.totalPerf-a.s.totalPerf);
@@ -6271,10 +8310,11 @@ const ExportModule = {
     const leaves=await DataStore.all('leaves');
     const summaries=await DataStore.all('summaries');
     const csReports=await DataStore.all('cs_reports');
+    const sopAll=await DataStore.all('sop_records');
     const month=currentMonth();
     const rows=[['员工','岗位','本月业绩','完成率','底薪','全勤奖','岗位工资','超额提成','加班费','好评奖','迟到扣款','请假扣款','应发','扣款','实发薪资']];
     users.forEach(u=>{
-      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month))};
+      const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
       const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
       if(s.kind==='intern'){
         rows.push([u.name,s.level.name,s.totalPerf,'-',`补助¥${s.allowance}(${s.attendDays}天)`,'-','-','-',
@@ -6460,6 +8500,8 @@ document.addEventListener('click',async e=>{
     'cloud-flush':()=>CloudModule.flush(),
     'cloud-disconnect':()=>CloudModule.disconnect(),
     'cloud-show-sql':()=>CloudModule.showSQL(),
+    'cloud-show-trash':()=>CloudModule.showTrash(),
+    'trash-restore':()=>CloudModule.restoreFromTrash(parseInt(t.dataset.i)),
     // 客服 · 客资管理
     'cs-add':()=>CustomerServiceModule.add(),
     'cs-edit':()=>CustomerServiceModule.edit(id),
@@ -6467,6 +8509,28 @@ document.addEventListener('click',async e=>{
     'cs-cancel':()=>CustomerServiceModule.markCancel(id),
     'cs-status':()=>CustomerServiceModule.markStatus(id, t.dataset.s),
     'cs-view':()=>CustomerServiceModule.switchView(t.dataset.key),
+    'cs-export-csv':()=>CustomerServiceModule.exportCsv(),
+    'cs-clear-filter':()=>CustomerServiceModule.clearFilter(),
+    'cs-cal-range':()=>CustomerServiceModule.setCalRange(t.dataset.key),
+    // 🆕 v6:订单 + 客诉
+    'cs-order-detail':()=>CustomerServiceModule.showOrderDetail(id),
+    'cs-add-extra':()=>CustomerServiceModule.addDealExtra(),
+    'cs-rm-extra':()=>CustomerServiceModule.rmDealExtra(parseInt(t.dataset.i)),
+    'cs-mark-delivered':()=>CustomerServiceModule.markDelivered(id),
+    'cs-add-complaint':()=>CustomerServiceModule.addComplaint(id),
+    'cs-edit-complaint':()=>CustomerServiceModule.editComplaint(id, t.dataset.i),
+    'cs-load-more':()=>CustomerServiceModule.loadMore(),
+    'cs-clear-search':()=>CustomerServiceModule.clearSearch(),
+    'orders-view':()=>OrderModule.switchView(t.dataset.key),
+    'orders-export':()=>OrderModule.exportCsv(),
+    'orders-delivered':()=>OrderModule.markDelivered(id),
+    'orders-detail':()=>CustomerServiceModule.showOrderDetail(id),
+    'complaints-view':()=>ComplaintModule.switchView(t.dataset.key),
+    'complaints-filter':()=>ComplaintModule.applyFilters(),
+    'complaints-export':()=>ComplaintModule.exportCsv(),
+    'complaints-edit':()=>ComplaintModule.openComplaint(id, t.dataset.i),
+    // 🆕 v7 SOP(由 change 事件触发,这里仅占位避免 'unknown action')
+    'sop-toggle':()=>{ /* handled by change event */ },
     'cloud-export-config':()=>CloudModule.exportConfig(),
     'cloud-import-config':()=>CloudModule.importConfig(),
     // 自定义价格
@@ -6495,6 +8559,10 @@ document.addEventListener('change',e=>{
   if(e.target.id==='leaveStart'||e.target.id==='leaveEnd')LeaveModule.updateDays();
   if(e.target.id==='perfOvertime'||e.target.id==='perfLate'||e.target.id==='perfEarly')PerfModule.updateSummary();
   if(e.target.id==='summaryImgInput'){SummaryModule.addImages(e.target.files);e.target.value=''}
+  // 🆕 v7 SOP checkbox
+  if(e.target.dataset && e.target.dataset.action==='sop-toggle'){
+    SOPModule.toggleItem(e.target);
+  }
 });
 
 /* ============ 数据变更自动刷新（实时同步核心） ============ */
