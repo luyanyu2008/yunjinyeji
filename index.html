@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#8B0000">
-<title>云锦长安 · 员工管理系统 v8 · 终极投产版</title>
+<title>云锦长安 · 员工管理系统 v7 · 终极投产版</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700;900&family=Noto+Sans+SC:wght@300;400;500;700&family=Cormorant+Garamond:wght@500;700&display=swap" rel="stylesheet">
 <style>
 /* ================== 设计令牌 ================== */
@@ -544,7 +544,7 @@ tr:hover td{background:rgba(201,169,97,.05)}
   <!-- 顶部导航 -->
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="topbar-logo">云锦长安<small>YUNJIN EMS · v8</small></div>
+      <div class="topbar-logo">云锦长安<small>YUNJIN EMS · v7</small></div>
       <div class="topbar-user">
         <div class="avatar" id="topAvatar">员</div>
         <div class="user-info">
@@ -1598,8 +1598,11 @@ const Calc = {
       const paidLeaveDays=leaves.filter(l=>l.type!=='调休').reduce((s,l)=>s+num(l.days),0);
       const leaveFine=paidLeaveDays*LEAVE_FINE;
 
-      // 全勤奖(任一违规则全扣)
-      const hasViolation = lateMin>0 || earlyMin>0 || paidLeaveDays>0;
+      // 全勤奖规则:
+      // - 迟到/早退:扣全勤(同时也扣 ¥1/分钟细项)
+      // - 调休:不扣全勤
+      // - 事假/病假累计超过 2 天:扣全勤(¥300)
+      const hasViolation = lateMin > 0 || earlyMin > 0 || paidLeaveDays > 2;
       const attBonus = hasViolation ? 0 : ATTENDANCE_BONUS;
 
       // 岗位工资(达标全额,未达标按比例)
@@ -3263,8 +3266,17 @@ const PerfListModule = {
     });
 
     let summaryHTML='';
+    // 🆕 v8 危险操作:店长清空所有业绩
+    if(isAdmin){
+      summaryHTML += `<div style="margin-bottom:12px;padding:10px;background:#FEF3C7;border:1px solid #f59e0b;border-radius:6px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="font-size:12px;color:#b45309">
+          ⚠️ <strong>店长专属工具</strong>:可批量清空业绩(不可逆,会备份到回收站)
+        </div>
+        <button class="btn btn-sm btn-ghost" data-action="perf-clear-all" style="color:var(--c-danger);font-size:12px">🗑️ 清空所有员工业绩</button>
+      </div>`;
+    }
     if(totalCount===0){
-      summaryHTML='<div class="empty"><div class="empty-emoji">📭</div><div class="empty-text">该时间段暂无业绩记录</div></div>';
+      summaryHTML+='<div class="empty"><div class="empty-emoji">📭</div><div class="empty-text">该时间段暂无业绩记录</div></div>';
     }else{
       summaryHTML=`<div class="overview-grid" style="margin-bottom:12px">
         <div class="stat-card"><div class="stat-card-label">总业绩</div><div class="stat-card-value">${fmtMoney(totalAmt)}</div></div>
@@ -3345,6 +3357,53 @@ const PerfListModule = {
       });
     }
     Modal.open('业绩详情',html,()=>true);
+  },
+
+  // 🆕 v8 店长专属:清空所有业绩(批量备份到回收站)
+  async clearAll(){
+    const u=Auth.current;
+    if(u.role!=='admin'){
+      Toast.error('仅店长可执行此操作');
+      return;
+    }
+    const all=await DataStore.all('performance');
+    if(all.length===0){
+      Toast.error('当前没有业绩可清空');
+      return;
+    }
+    Modal.open('⚠️ 危险操作:清空所有员工业绩',`
+      <div style="line-height:1.85">
+        <div style="padding:14px;background:#FEE2E2;border:2px solid #dc2626;border-radius:6px;margin-bottom:12px">
+          <div style="font-weight:700;color:#991b1b;font-size:15px">即将清空 <strong>${all.length}</strong> 条业绩记录</div>
+          <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+            ✅ 已删数据自动备份到【🗑️ 回收站】,30 天内可逐条恢复<br>
+            ⚠️ 此操作会同步到云端,所有设备的业绩都会清空<br>
+            ⚠️ 不影响:签到记录、客资、薪酬历史
+          </div>
+        </div>
+        <div style="font-size:13px;color:var(--c-muted);padding:8px;background:var(--c-cream);border-radius:4px">
+          确认后,系统会:<br>
+          ① 把这 ${all.length} 条业绩全部备份到本地回收站<br>
+          ② 从云端 + 本地数据库删除<br>
+          ③ 操作日志会记录这次清空
+        </div>
+      </div>
+    `,async()=>{
+      try{
+        Toast.info(`正在清空 ${all.length} 条业绩...`);
+        let cnt=0;
+        for(const r of all){
+          await DataStore.delete('performance',r.id);
+          cnt++;
+        }
+        Logger.log('perf_clear_all',`店长清空 ${cnt} 条业绩(已备份到回收站)`);
+        Toast.success(`✅ 已清空 ${cnt} 条业绩(可在回收站恢复)`);
+        this.refresh();
+      }catch(e){
+        Toast.error('清空失败:'+e.message);
+        console.error('[ClearAll]',e);
+      }
+    });
   },
 
   async delete(id){
@@ -4038,6 +4097,9 @@ const SalaryModule = {
           <div class="salary-line">
             <span>全勤奖 ${s.attBonusLost?'<span class="badge badge-danger">未达全勤</span>':'<span class="badge badge-success">达成</span>'}</span>
             <strong>${fmtMoney(s.attBonus)}</strong>
+          </div>
+          <div style="font-size:11px;color:var(--c-muted);padding:4px 8px;background:var(--c-cream);border-radius:4px;margin-top:6px">
+            💡 全勤奖规则:迟到/早退 → 扣全勤;事假病假累计超 2 天 → 扣全勤;调休不扣
           </div>
         </div>
       </div>
@@ -8458,6 +8520,7 @@ document.addEventListener('click',async e=>{
     'rm-rev-img':()=>PerfModule.removeReviewImage(i,idx),
     'view-perf':()=>PerfListModule.viewDetail(id),
     'del-perf':()=>PerfListModule.delete(id),
+    'perf-clear-all':()=>PerfListModule.clearAll(),
     'approve':()=>LeaveModule.approve(id),
     'reject':()=>LeaveModule.reject(id),
     'cancel-leave':()=>LeaveModule.cancel(id),
