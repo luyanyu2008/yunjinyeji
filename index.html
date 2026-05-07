@@ -949,6 +949,16 @@ tr:hover td{background:rgba(201,169,97,.05)}
       <div id="sopContent"></div>
     </div>
 
+    <!-- 🆕 v9 电子宠物养成 -->
+    <div class="page" id="page-pet">
+      <div class="page-header">
+        <button class="page-back" onclick="Router.go('home')">←</button>
+        <div class="page-title-bar"></div>
+        <div class="page-title">🐾 我的萌宠</div>
+      </div>
+      <div id="petContent"></div>
+    </div>
+
   </main>
 </div>
 
@@ -1032,8 +1042,8 @@ const Bus = {
 
 /* ============ DataStore 数据层（IndexedDB） ============ */
 const DB_NAME='yj_ems_v3';
-const DB_VERSION=5;
-const STORES=['users','attendance','performance','leaves','summaries','settings','inspirations','operation_logs','learning_courses','cs_reports','sop_records'];
+const DB_VERSION=6;
+const STORES=['users','attendance','performance','leaves','summaries','settings','inspirations','operation_logs','learning_courses','cs_reports','sop_records','pets','feed_logs'];
 
 const DataStore = {
   db:null,
@@ -1398,6 +1408,62 @@ const PHOTO_WARNING_DAYS = 5;
 
 // 🆕 v8 SOP 核验 — 按云锦长安《品质流程检查表》逐项落地
 const SOP_FINE_PER_SHIFT = 10;  // 班次未达标扣款(元/班次)
+
+// 🆕 v9 电子宠物养成系统
+// ① 妆发档位饲料表(按 unitPrice 查表,自动发普通饲料)
+const PET_FEED_BY_PRICE = {
+  129: 20, 188: 25, 199: 30, 299: 40, 399: 55, 499: 70
+};
+// 摄影加推奖励
+const PET_PHOTO_BONUS_FEED = 60;
+// 日常 SOP 任务奖励
+const PET_DAILY_REWARDS = {
+  signin_ontime:    {feed:10, name:'准时上下班打卡'},
+  sop_pass:         {feed:15, name:'卫生 SOP 达标'},
+  zero_complaint:   {feed:20, name:'当日零客诉'},
+  review_with_img:  {feed:15, name:'客户带图好评(每条)'},
+  share_promo:      {feed:10, name:'转发门店宣传'},
+  team_collab:      {feed:10, name:'岗位配合无推诿'}
+};
+// 奖惩规则
+const PET_PENALTIES = {
+  late_early:       {feed:-10, name:'迟到早退'},
+  complaint:        {feed:-30, mood:0, name:'有效客诉(心情清零)'},
+  service_violate:  {feed:-20, name:'服务/仪容违规'},
+  full_attendance:  {premium:30, name:'月度全勤(奖高级饲料)'}
+};
+// 5 种古风宠物
+const PET_TYPES = {
+  fox:    {name:'灵狐', emoji:'🦊', desc:'机灵狡黠,九尾流光'},
+  rabbit: {name:'玉兔', emoji:'🐰', desc:'冰雪聪明,广寒仙气'},
+  deer:   {name:'星辰鹿', emoji:'🦌', desc:'温润如玉,星河角生'},
+  cat:    {name:'空灵猫', emoji:'🐱', desc:'灵性十足,踏雪寻梅'},
+  crane:  {name:'云鹤', emoji:'🦢', desc:'仙气飘渺,云端起舞'}
+};
+// 等级表(累计成长值 → 解锁权益)
+const PET_LEVELS = [
+  {lv:1,  growth:0,    title:'初识',         reward:'基础宠物形象、默认头像'},
+  {lv:2,  growth:120,  title:'萌动',         reward:'专属基础头像框'},
+  {lv:3,  growth:300,  title:'灵动',         reward:'宠物简易动态特效'},
+  {lv:4,  growth:550,  title:'秀美',         reward:'普通古风皮肤 1 套'},
+  {lv:5,  growth:900,  title:'风雅',         reward:'专属荣誉称号 + 成长 +5%'},
+  {lv:6,  growth:1400, title:'卓越',         reward:'第二套古风皮肤 + 榜单标识'},
+  {lv:7,  growth:2000, title:'灵韵',         reward:'心情值上限提升至 120'},
+  {lv:8,  growth:2800, title:'仙姿',         reward:'稀有动态特效 + 成长 +10%'},
+  {lv:9,  growth:3800, title:'神韵',         reward:'限定绝版皮肤资格'},
+  {lv:10, growth:5000, title:'神兽',         reward:'金色标识 + 评优优先 + 月领高级饲料'}
+];
+// 饲料属性
+const PET_FEED_TYPES = {
+  normal:  {name:'普通饲料', emoji:'🌾', satiety:2, growth:1, color:'#10b981'},
+  premium: {name:'高级饲料', emoji:'🍡', satiety:5, growth:3, color:'#f59e0b'},
+  limited: {name:'限定饲料', emoji:'🎋', satiety:8, growth:6, color:'#dc2626'}
+};
+// 阈值
+const PET_SATIETY_MAX_BASE = 100;
+const PET_SATIETY_LOW = 30;
+const PET_MOOD_MAX_BASE = 100;
+const PET_MOOD_MAX_HIGH = 120;  // 7 级后
 // 岗位标签:全员/化妆师/礼服/店长/晚班/早班/轮值
 // category:卫生清洁 / 物品清洗 / 员工技术 / 个人卫生 / 垃圾处理 / 设施清洁 / 收银点单 / 出单
 const SOP_SHIFTS = {
@@ -1521,7 +1587,233 @@ const QUOTES = [
 ];
 
 /* ============ 业绩计算（核心薪酬逻辑） ============ */
+// 🆕 v9 PetSystem · 电子宠物核心引擎(自动发饲料 + 投喂 + 升级)
+const PetSystem = {
+  // 获取或初始化某员工的宠物
+  async getOrCreate(userId){
+    let pet = await DataStore.get('pets', userId);
+    if(!pet){
+      pet = {
+        id: userId,
+        type: '',  // 未选择,首次进入会弹出选择框
+        level: 1,
+        satiety: 100,
+        mood: 100,
+        growth: 0,
+        feeds: {normal:0, premium:0, limited:0},
+        unlocked: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      await DataStore.put('pets', pet);
+    }
+    if(!pet.feeds)pet.feeds={normal:0, premium:0, limited:0};
+    return pet;
+  },
+
+  // 当前等级对应的心情上限
+  moodMax(pet){return pet.level>=7 ? PET_MOOD_MAX_HIGH : PET_MOOD_MAX_BASE},
+  
+  // 计算当前等级
+  calcLevel(growth){
+    let lv=1;
+    for(const l of PET_LEVELS){
+      if(growth>=l.growth)lv=l.lv;
+      else break;
+    }
+    return lv;
+  },
+  // 距下一级
+  toNextLevel(pet){
+    const next=PET_LEVELS.find(l=>l.lv===pet.level+1);
+    if(!next)return {needed:0, total:0, isMax:true};
+    const cur=PET_LEVELS.find(l=>l.lv===pet.level);
+    return {
+      needed: Math.max(0, next.growth - pet.growth),
+      total: next.growth - cur.growth,
+      done: pet.growth - cur.growth,
+      isMax: false
+    };
+  },
+
+  // ⭐ 核心:发放饲料
+  // type: 'normal'|'premium'|'limited'
+  // source: 来源标识(用于流水)
+  async grant(userId, type, amount, source, desc){
+    if(!userId || amount===0)return;
+    const pet = await this.getOrCreate(userId);
+    pet.feeds[type] = (pet.feeds[type]||0) + amount;
+    if(pet.feeds[type]<0)pet.feeds[type]=0;
+    pet.updatedAt = Date.now();
+    await DataStore.put('pets', pet);
+    
+    // 写流水
+    await DataStore.put('feed_logs', {
+      id: `fl_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+      userId,
+      date: today(),
+      type,
+      amount,
+      source: source||'unknown',
+      desc: desc||'',
+      createdAt: Date.now()
+    });
+    
+    if(amount>0)console.log(`[Pet] ${userId} +${amount} ${type} (${source})`);
+    else console.log(`[Pet] ${userId} ${amount} ${type} (${source})`);
+  },
+
+  // 心情值调整
+  async adjustMood(userId, delta, reason){
+    const pet = await this.getOrCreate(userId);
+    pet.mood = Math.max(0, Math.min(this.moodMax(pet), pet.mood + delta));
+    pet.updatedAt = Date.now();
+    await DataStore.put('pets', pet);
+    console.log(`[Pet] ${userId} 心情 ${delta>0?'+':''}${delta} → ${pet.mood} (${reason||''})`);
+  },
+
+  // 心情清零(严重客诉)
+  async clearMood(userId, reason){
+    const pet = await this.getOrCreate(userId);
+    pet.mood = 0;
+    pet.updatedAt = Date.now();
+    await DataStore.put('pets', pet);
+    console.log(`[Pet] ${userId} 心情清零 (${reason||''})`);
+  },
+
+  // 投喂
+  async feed(userId, feedType, count=1){
+    const pet = await this.getOrCreate(userId);
+    if(!pet.type){throw new Error('请先选择宠物')}
+    const cur = pet.feeds[feedType]||0;
+    if(cur < count)throw new Error(`${PET_FEED_TYPES[feedType].name}不足`);
+    
+    const cfg = PET_FEED_TYPES[feedType];
+    
+    // 心情加成
+    let moodBonus = 1;
+    if(pet.mood>=80)moodBonus = 1.2;
+    else if(pet.mood<40)moodBonus = 0.5;
+    
+    // 萎靡状态:不长成长值
+    if(pet.satiety < PET_SATIETY_LOW){
+      // 先吃饱才能成长 - 这里允许吃,但成长值仍按规则计算
+    }
+    
+    let satietyAdded = 0;
+    let growthAdded = 0;
+    
+    for(let i=0;i<count;i++){
+      // 饱食度上限就是 100,溢出不浪费,溢出部分仍转成长值
+      const satMax = PET_SATIETY_MAX_BASE;
+      const satGain = cfg.satiety;
+      
+      if(pet.satiety < satMax){
+        const realSat = Math.min(satGain, satMax - pet.satiety);
+        pet.satiety += realSat;
+        satietyAdded += realSat;
+      }
+      // 成长值 = 饲料基础成长 × 心情系数
+      const grow = Math.round(cfg.growth * moodBonus * 10) / 10;
+      // 萎靡时成长值减半(已通过 mood<40 减半;额外饱食<30 再次减半保护)
+      const finalGrow = pet.satiety < PET_SATIETY_LOW ? Math.round(grow*0.5*10)/10 : grow;
+      pet.growth += finalGrow;
+      growthAdded += finalGrow;
+    }
+    
+    // 扣饲料
+    pet.feeds[feedType] -= count;
+    
+    // 升级判定
+    const newLevel = this.calcLevel(pet.growth);
+    const leveledUp = newLevel > pet.level;
+    pet.level = newLevel;
+    pet.updatedAt = Date.now();
+    
+    await DataStore.put('pets', pet);
+    return {pet, satietyAdded, growthAdded, leveledUp, newLevel};
+  },
+
+  // 选择宠物种类
+  async chooseType(userId, type){
+    if(!PET_TYPES[type])throw new Error('宠物类型不存在');
+    const pet = await this.getOrCreate(userId);
+    if(pet.type)throw new Error('已经选过宠物了,无法更换');
+    pet.type = type;
+    pet.updatedAt = Date.now();
+    await DataStore.put('pets', pet);
+    return pet;
+  },
+
+  // ⭐ 业绩录入时调用:按订单档位发饲料(给录入业绩的化妆师)
+  async grantForPerformance(userId, perfRecord){
+    if(!userId || !perfRecord || !perfRecord.items)return;
+    let totalNormal = 0;
+    const details = [];
+    for(const it of perfRecord.items){
+      const price = it.unitPrice || 0;
+      const cnt = it.count || 0;
+      if(!price || !cnt)continue;
+      const baseFeed = PET_FEED_BY_PRICE[price] || 0;
+      // 不在标准档位的(自定义价格)按 1 元 = 0.15 颗折算(199→30 比例)
+      const feed = baseFeed > 0 ? baseFeed : Math.round(price * 0.15);
+      const rec = Math.round(feed * cnt);
+      totalNormal += rec;
+      details.push(`¥${price}×${cnt}=${rec}颗`);
+    }
+    if(totalNormal>0){
+      await this.grant(userId, 'normal', totalNormal, 'perf', `业绩订单: ${details.join(', ')}`);
+    }
+    // 好评奖
+    const reviews = perfRecord.reviews || [];
+    let reviewFeed = 0;
+    reviews.forEach(r=>{
+      const platCount = (r.platforms||[]).length;
+      if(platCount > 0)reviewFeed += 15;  // 每条带图好评 15 颗
+    });
+    if(reviewFeed>0){
+      await this.grant(userId, 'normal', reviewFeed, 'review', `${reviews.length} 条客户好评`);
+    }
+    return totalNormal + reviewFeed;
+  },
+
+  // ⭐ 客资成交时调用:摄影加推奖励
+  async grantForPhotoOrder(userId, csReport){
+    if(!userId)return;
+    if(!csReport || !csReport.withPhoto)return;
+    if(csReport.status !== 'deal')return;
+    await this.grant(userId, 'normal', PET_PHOTO_BONUS_FEED, 'photo', `摄影加推: ${csReport.customerName||'未知客户'}`);
+    return PET_PHOTO_BONUS_FEED;
+  },
+
+  // ⭐ 签到时调用:准时打卡奖励 / 迟到扣
+  async grantForSignin(userId, attendRecord){
+    if(!userId || !attendRecord)return;
+    if((attendRecord.lateMinutes||0) > 0 || (attendRecord.earlyMinutes||0) > 0){
+      await this.grant(userId, 'normal', -10, 'late_early', '迟到/早退');
+    }else{
+      await this.grant(userId, 'normal', 10, 'signin', '准时上下班');
+    }
+  },
+
+  // ⭐ 客诉时调用
+  async penaltyForComplaint(userId, level){
+    if(level === 'high'){
+      await this.grant(userId, 'normal', -30, 'complaint', '有效客诉(高级)');
+      await this.clearMood(userId, '客诉心情清零');
+    }
+  },
+
+  // ⭐ SOP 完成时调用
+  async grantForSopComplete(userId, shift){
+    await this.grant(userId, 'normal', 15, 'sop', `${shift} SOP 达标`);
+  }
+};
+
+
+/* ============ Calc 薪酬计算器 ============ */
 const Calc = {
+
   // 兼容字段适配
   getAmount(rec){
     if(!rec)return 0;
@@ -1927,7 +2219,9 @@ const CloudSync = {
     operation_logs:'yj_operation_logs',
     learning_courses:'yj_learning_courses',
     cs_reports:'yj_cs_reports',
-    sop_records:'yj_sop_records'
+    sop_records:'yj_sop_records',
+    pets:'yj_pets',
+    feed_logs:'yj_feed_logs'
   },
 
   loadConfig(){
@@ -2576,7 +2870,8 @@ const Router = {
       cs:()=>CustomerServiceModule.refresh(),
       orders:()=>OrderModule.refresh(),
       complaints:()=>ComplaintModule.refresh(),
-      sop:()=>SOPModule.refresh()
+      sop:()=>SOPModule.refresh(),
+      pet:()=>PetModule.refresh()
     };
     hooks[page]&&hooks[page]();
   }
@@ -2724,6 +3019,7 @@ const HomeModule = {
         {icon:'🕘',name:'签到打卡',desc:'迟到/加班',page:'signin'},
         {icon:'📞',name:'客资管理',desc:'预约/排单/转化',page:'cs'},
         {icon:'📋',name:'SOP 核验',desc:'班次打卡',page:'sop'},
+        {icon:'🐾',name:'我的宠物',desc:'养成排行',page:'pet'},
         {icon:'📝',name:'请假申请',desc:'事/病/调休',page:'leave'},
         {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
         {icon:'💰',name:'薪酬明细',desc:'纯提成',page:'salary'},
@@ -2736,6 +3032,7 @@ const HomeModule = {
         {icon:'💼',name:'业绩录入',desc:'快速计数',page:'perf'},
         {icon:'📊',name:'业绩明细',desc:'查询统计',page:'perflist'},
         {icon:'📋',name:'SOP 核验',desc:'班次打卡',page:'sop'},
+        {icon:'🐾',name:'我的宠物',desc:'养成排行',page:'pet'},
         {icon:'📝',name:'请假申请',desc:'事/病/调休',page:'leave'},
         {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
         {icon:'💰',name:'薪酬明细',desc:isIntern?'补助/加班/好评':'实时计算',page:'salary'},
@@ -2750,6 +3047,7 @@ const HomeModule = {
       features.push({icon:'📷',name:'摄影监控',desc:'回片倒计时',page:'orders'});
       features.push({icon:'📣',name:'客诉管理',desc:'原因分析',page:'complaints'});
       features.push({icon:'📋',name:'SOP 核验',desc:'班次打卡',page:'sop'});
+      features.push({icon:'🐾',name:'我的宠物',desc:'养成排行',page:'pet'});
       features.push({icon:'👥',name:'账号管理',desc:'员工账号',page:'users'});
       features.push({icon:'📈',name:'全员汇总',desc:'排行导出',page:'overall'});
       features.push({icon:'💵',name:'全员薪资',desc:'总和/明细',page:'totalsalary'});
@@ -2848,7 +3146,21 @@ const Attendance = {
     rec.updatedAt=Date.now();
     await DataStore.put('attendance',rec);
     Logger.log('signin',`签到 ${time}${lateMin>0?` 迟到${lateMin}分钟`:''}`);
-    Toast.success(lateMin>0?`签到成功 · 迟到 ${lateMin} 分钟`:'签到成功');
+    // 🆕 v9 PetSystem 挂钩:准时打卡 +10 / 迟到 -10
+    try{
+      if(typeof PetSystem!=='undefined'){
+        await PetSystem.grantForSignin(u.id, rec);
+        if(lateMin>0){
+          Toast.error(`签到成功 · 迟到 ${lateMin} 分钟 · 宠物 -10 颗 🥺`);
+        }else{
+          Toast.success(`签到成功 · 宠物 +10 颗 🌾`);
+        }
+      }else{
+        Toast.success(lateMin>0?`签到成功 · 迟到 ${lateMin} 分钟`:'签到成功');
+      }
+    }catch(e){
+      Toast.success(lateMin>0?`签到成功 · 迟到 ${lateMin} 分钟`:'签到成功');
+    }
     this.refresh();
   },
 
@@ -2871,6 +3183,13 @@ const Attendance = {
     if(earlyMin>0)rec.status='early';
     rec.updatedAt=Date.now();
     await DataStore.put('attendance',rec);
+    
+    // 🆕 v9 PetSystem 挂钩:早退 -10
+    try{
+      if(typeof PetSystem!=='undefined' && earlyMin>0){
+        await PetSystem.grant(u.id,'normal',-10,'late_early',`早退 ${earlyMin} 分钟`);
+      }
+    }catch(e){console.warn('[Pet]',e)}
 
     const msg=[];
     if(earlyMin>0)msg.push(`早退 ${earlyMin} 分钟`);
@@ -3221,7 +3540,22 @@ const PerfModule = {
     try{
       await DataStore.put('performance',rec);
       Logger.log('create_perf',`录入业绩 ${fmtMoney(rec.totalAmount)} (${items.length}项,${rec.reviews.length}条好评)`);
-      Toast.success('业绩录入成功 ✨');
+      // 🆕 v9 PetSystem 挂钩:发饲料
+      try{
+        if(typeof PetSystem!=='undefined'){
+          const petFeed = await PetSystem.grantForPerformance(rec.userId, rec);
+          if(petFeed > 0){
+            Toast.success(`业绩录入成功 ✨ +${petFeed} 颗饲料 🌾`);
+          }else{
+            Toast.success('业绩录入成功 ✨');
+          }
+        }else{
+          Toast.success('业绩录入成功 ✨');
+        }
+      }catch(petErr){
+        console.warn('[Pet] grantForPerformance failed:', petErr);
+        Toast.success('业绩录入成功 ✨');
+      }
       this.refresh();
     }catch(e){
       Toast.error('保存失败:'+e.message);
@@ -6409,7 +6743,24 @@ const CustomerServiceModule = {
         }
         await DataStore.put('cs_reports',data);
         Logger.log('cs_deal',`${rec.customerName} 成交 ¥${total} (${data.packageName})`);
-        Toast.success(`🎉 成交录入完成,总额 ¥${total}`);
+        // 🆕 v9 PetSystem 挂钩:摄影加推 → 推荐化妆师拿 60 颗
+        try{
+          if(typeof PetSystem!=='undefined' && data.withPhoto){
+            // 优先发给指派的化妆师,如果没有就发给客资创建人
+            const recommenderId = (data.assignedMuas && data.assignedMuas[0]) || data.userId;
+            if(recommenderId){
+              await PetSystem.grantForPhotoOrder(recommenderId, data);
+              Toast.success(`🎉 成交完成 ¥${total} · 推荐化妆师 +${PET_PHOTO_BONUS_FEED} 颗饲料 🌾`);
+            }else{
+              Toast.success(`🎉 成交录入完成,总额 ¥${total}`);
+            }
+          }else{
+            Toast.success(`🎉 成交录入完成,总额 ¥${total}`);
+          }
+        }catch(petErr){
+          console.warn('[Pet] grantForPhotoOrder failed:', petErr);
+          Toast.success(`🎉 成交录入完成,总额 ¥${total}`);
+        }
         this._dealExtrasState=null;
         this.refresh();
       }catch(e){
@@ -6711,6 +7062,18 @@ const CustomerServiceModule = {
         
         await DataStore.put('cs_reports',r);
         Logger.log(isEdit?'complaint_edit':'complaint_add',`${r.customerName} 客诉 ${data.level}/${data.status}`);
+        // 🆕 v9 PetSystem 挂钩:高级客诉对相关化妆师扣 30 颗 + 心情清零
+        try{
+          if(typeof PetSystem!=='undefined' && data.level==='high' && !isEdit){
+            // 找到关联的化妆师(指派的化妆师 OR 客资创建人)
+            const targetIds = [...(r.assignedMuas||[])];
+            if(targetIds.length===0 && r.userId)targetIds.push(r.userId);
+            for(const uid of targetIds){
+              await PetSystem.penaltyForComplaint(uid, 'high');
+            }
+            if(targetIds.length>0)Toast.error(`⚠️ 高级客诉:相关化妆师宠物 -30 颗 + 心情清零`);
+          }
+        }catch(e){console.warn('[Pet]',e)}
         Toast.success('✅ 客诉已'+(isEdit?'更新':'登记'));
         this.refresh();
         // 重新打开订单详情
@@ -7352,11 +7715,335 @@ const SOPModule = {
     Logger.log('sop_check',`SOP ${shift} ${item} ${checked?'✓':'✕'}`);
     
     if(done===total){
-      Toast.success(`✅ ${SOP_SHIFTS[shift].name} 已完成${rec.late?'(已逾期)':''}`);
+      // 🆕 v9 PetSystem 挂钩:SOP 全完成 +15 颗(只在第一次全完成时发,且未逾期)
+      let petMsg='';
+      try{
+        if(typeof PetSystem!=='undefined' && rec.completedAt && !rec.late && !rec._fed){
+          await PetSystem.grantForSopComplete(uid, SOP_SHIFTS[shift].name);
+          rec._fed=true;
+          await DataStore.put('sop_records',rec);
+          petMsg=' · 宠物 +15 颗 🌾';
+        }
+      }catch(e){console.warn('[Pet]',e)}
+      Toast.success(`✅ ${SOP_SHIFTS[shift].name} 已完成${rec.late?'(已逾期)':''}${petMsg}`);
     }
     
     // 刷新视图(异步,避免立即刷打断用户)
     setTimeout(()=>this.refresh(),300);
+  }
+};
+
+
+/* ============ 🆕 v9 PetModule 我的电子宠物 ============ */
+const PetModule = {
+  curTab: 'pet',  // pet | rank | logs
+  
+  async refresh(){
+    const u=Auth.current;
+    if(!u){return}
+    
+    const pet = await PetSystem.getOrCreate(u.id);
+    
+    // 🌸 首次进入 → 选宠 modal
+    if(!pet.type){
+      this._showChooseModal();
+      return;
+    }
+    
+    const tabs = [
+      {key:'pet',  name:'🐾 我的宠物'},
+      {key:'rank', name:'🏆 排行榜'},
+      {key:'logs', name:'📜 饲料流水'}
+    ];
+    
+    let html = `
+      <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">🌸 员工专属萌宠养成</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+          做业绩 → 自动发饲料 → 喂养升级 → 解锁皮肤、称号、福利<br>
+          <strong>129套餐=20颗 / 199=30 / 299=40 / 399=55 / 499=70</strong> · 摄影加推 +60 · 客户好评 +15
+        </div>
+      </div>
+      
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin:14px 0">
+        ${tabs.map(t=>`<button class="btn btn-sm ${t.key===this.curTab?'btn-primary':'btn-outline'}" data-action="pet-tab" data-key="${t.key}">${t.name}</button>`).join('')}
+      </div>
+      
+      <div id="petTabBody"></div>
+    `;
+    
+    $('#petContent').innerHTML = html;
+    
+    if(this.curTab==='pet')await this._renderPet(pet);
+    else if(this.curTab==='rank')await this._renderRank();
+    else if(this.curTab==='logs')await this._renderLogs(u.id);
+  },
+
+  async _renderPet(pet){
+    const t = PET_TYPES[pet.type];
+    const lvInfo = PET_LEVELS.find(l=>l.lv===pet.level);
+    const nextInfo = PetSystem.toNextLevel(pet);
+    const moodMax = PetSystem.moodMax(pet);
+    const isHungry = pet.satiety < PET_SATIETY_LOW;
+    const isHappy = pet.mood >= 80;
+    const isDepressed = pet.mood < 40;
+    
+    let stateBadge = '';
+    if(isHungry)stateBadge = '<span style="padding:3px 10px;background:#FEE2E2;color:#991b1b;border-radius:12px;font-size:12px;font-weight:600">😢 萎靡</span>';
+    else if(isHappy)stateBadge = '<span style="padding:3px 10px;background:#D4EDDA;color:#15803d;border-radius:12px;font-size:12px;font-weight:600">🌟 心情极佳</span>';
+    else if(isDepressed)stateBadge = '<span style="padding:3px 10px;background:#FEF3C7;color:#b45309;border-radius:12px;font-size:12px;font-weight:600">😟 心情低落</span>';
+    else stateBadge = '<span style="padding:3px 10px;background:#E0F2FE;color:#1e40af;border-radius:12px;font-size:12px;font-weight:600">😊 状态良好</span>';
+    
+    const totalFeed = (pet.feeds.normal||0)+(pet.feeds.premium||0)+(pet.feeds.limited||0);
+    
+    let html = `
+      <div class="card" style="text-align:center;background:linear-gradient(180deg,#FFF8DC 0%,#fff 100%)">
+        <div style="font-size:96px;line-height:1.2;${isHungry?'opacity:0.5;filter:grayscale(0.5)':''}">${t.emoji}</div>
+        <div style="font-size:20px;font-weight:700;color:var(--c-primary);margin-top:6px">${t.name}</div>
+        <div style="font-size:13px;color:var(--c-muted)">${t.desc}</div>
+        <div style="margin-top:10px">${stateBadge}</div>
+        <div style="margin-top:14px;display:inline-block;padding:6px 14px;background:linear-gradient(135deg,#FFD700,#FFA500);color:#fff;border-radius:20px;font-weight:700">
+          Lv.${pet.level} · ${lvInfo.title}
+        </div>
+      </div>
+      
+      <div class="card" style="margin-top:12px">
+        <div style="display:grid;grid-template-columns:1fr;gap:12px">
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+              <span>🍽 饱食度 ${isHungry?'<strong style="color:#dc2626">(萎靡)</strong>':''}</span>
+              <strong>${pet.satiety}/${PET_SATIETY_MAX_BASE}</strong>
+            </div>
+            <div style="height:10px;background:#E5E7EB;border-radius:5px;overflow:hidden">
+              <div style="width:${pet.satiety}%;height:100%;background:linear-gradient(90deg,${isHungry?'#dc2626':'#10b981'},${isHungry?'#f87171':'#34d399'});transition:width .3s"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+              <span>💗 心情值 ${isHappy?'<strong style="color:#10b981">(成长 +20%)</strong>':isDepressed?'<strong style="color:#f59e0b">(成长减半)</strong>':''}</span>
+              <strong>${pet.mood}/${moodMax}</strong>
+            </div>
+            <div style="height:10px;background:#E5E7EB;border-radius:5px;overflow:hidden">
+              <div style="width:${(pet.mood/moodMax)*100}%;height:100%;background:linear-gradient(90deg,#ec4899,#f472b6);transition:width .3s"></div>
+            </div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+              <span>📈 成长进度</span>
+              <strong>${nextInfo.isMax?'已满级':`${nextInfo.done}/${nextInfo.total} (距 Lv.${pet.level+1} 还需 ${nextInfo.needed})`}</strong>
+            </div>
+            <div style="height:10px;background:#E5E7EB;border-radius:5px;overflow:hidden">
+              <div style="width:${nextInfo.isMax?100:Math.round(nextInfo.done/nextInfo.total*100)}%;height:100%;background:linear-gradient(90deg,#FFD700,#FFA500);transition:width .3s"></div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:14px;padding:10px;background:var(--c-cream);border-radius:6px;font-size:12px;line-height:1.7">
+          <strong>${lvInfo.title}权益</strong>:${lvInfo.reward}
+        </div>
+      </div>
+      
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">🌾 饲料背包(共 ${totalFeed} 颗)</div>
+        ${Object.entries(PET_FEED_TYPES).map(([k,v])=>{
+          const cnt = pet.feeds[k]||0;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:var(--c-cream);border-radius:6px;margin-bottom:6px">
+            <div style="flex:1">
+              <div style="font-weight:600;color:${v.color}">${v.emoji} ${v.name} × ${cnt}</div>
+              <div style="font-size:11px;color:var(--c-muted);margin-top:2px">饱食 +${v.satiety} · 成长 +${v.growth}</div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm btn-outline" data-action="pet-feed" data-type="${k}" data-cnt="1" ${cnt<1?'disabled':''} style="padding:4px 10px">投喂 1</button>
+              ${cnt>=10?`<button class="btn btn-sm btn-outline" data-action="pet-feed" data-type="${k}" data-cnt="10" style="padding:4px 10px">投 10</button>`:''}
+            </div>
+          </div>`;
+        }).join('')}
+        ${totalFeed===0?`<div style="text-align:center;padding:20px;color:var(--c-muted);font-size:13px">😴 饲料用完了,赶快做业绩补给吧!</div>`:''}
+      </div>
+      
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">📚 等级权益预览</div>
+        <table style="width:100%;font-size:12px">
+          <thead><tr style="color:var(--c-muted)"><th>等级</th><th>累计成长</th><th>权益</th></tr></thead>
+          <tbody>
+            ${PET_LEVELS.map(l=>`<tr style="${l.lv===pet.level?'background:#FFF8DC;font-weight:600':''}">
+              <td>Lv.${l.lv}${l.lv===pet.level?' ★':''}</td>
+              <td class="td-money">${l.growth}</td>
+              <td>${escapeHtml(l.reward)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    
+    $('#petTabBody').innerHTML = html;
+  },
+
+  async _renderRank(){
+    const allPets = await DataStore.all('pets');
+    const allUsers = await DataStore.all('users');
+    const userMap = Object.fromEntries(allUsers.map(u=>[u.id,u]));
+    
+    // 按等级 + 成长值排序
+    const lvList = allPets
+      .filter(p=>p.type)
+      .map(p=>({...p, user:userMap[p.id]}))
+      .filter(p=>p.user)
+      .sort((a,b)=>(b.level-a.level)||(b.growth-a.growth));
+    
+    // 本周饲料获取榜(本周流水累计)
+    const allLogs = await DataStore.all('feed_logs');
+    const weekStart = (()=>{const d=new Date();d.setDate(d.getDate()-d.getDay());return d.toISOString().slice(0,10)})();
+    const weekFeedMap = {};
+    allLogs.forEach(l=>{
+      if(l.date >= weekStart && l.amount > 0){
+        weekFeedMap[l.userId] = (weekFeedMap[l.userId]||0) + l.amount;
+      }
+    });
+    const weekList = Object.entries(weekFeedMap)
+      .map(([uid,amt])=>({user:userMap[uid], amount:amt}))
+      .filter(x=>x.user)
+      .sort((a,b)=>b.amount-a.amount);
+    
+    let html = `
+      <div class="card">
+        <div class="card-title">🏆 宠物等级总榜</div>
+        ${lvList.length===0?'<div style="text-align:center;padding:20px;color:var(--c-muted)">暂无数据</div>':
+          lvList.slice(0,20).map((p,i)=>{
+            const t = PET_TYPES[p.type];
+            const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;
+            return `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:${i<3?'linear-gradient(135deg,#FFF8DC,#fff)':'var(--c-cream)'};border-radius:6px;margin-bottom:6px">
+              <div style="font-size:18px;font-weight:700;width:30px;text-align:center">${medal}</div>
+              <div style="font-size:32px">${t.emoji}</div>
+              <div style="flex:1">
+                <div style="font-weight:600">${escapeHtml(p.user.name)}</div>
+                <div style="font-size:12px;color:var(--c-muted)">${t.name} · 成长 ${p.growth}</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-weight:700;color:var(--c-primary);font-size:18px">Lv.${p.level}</div>
+              </div>
+            </div>`;
+          }).join('')
+        }
+      </div>
+      
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">📊 本周饲料获取榜</div>
+        ${weekList.length===0?'<div style="text-align:center;padding:20px;color:var(--c-muted)">本周暂无数据</div>':
+          weekList.slice(0,10).map((x,i)=>{
+            const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;
+            return `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:${i<3?'linear-gradient(135deg,#FEF3C7,#fff)':'var(--c-cream)'};border-radius:6px;margin-bottom:6px">
+              <div style="font-size:18px;font-weight:700;width:30px;text-align:center">${medal}</div>
+              <div style="flex:1;font-weight:600">${escapeHtml(x.user.name)}</div>
+              <div style="font-weight:700;color:#f59e0b">+${x.amount} 颗</div>
+            </div>`;
+          }).join('')
+        }
+      </div>
+      
+      <div class="card" style="margin-top:12px;background:linear-gradient(135deg,#FFF8DC,#fff)">
+        <div class="card-title">🎁 榜单奖励</div>
+        <div style="font-size:13px;line-height:1.85">
+          • 周榜第 1:高级饲料 50 颗 + 专属头像框 7 天<br>
+          • 周榜 2-3:高级饲料 30 颗<br>
+          • 月榜第 1:限定皮肤 1 套 + 带薪调休半天 + 评优加分<br>
+          • 月榜 2-3:高级饲料 60 颗 + 门店当众表彰
+        </div>
+      </div>
+    `;
+    
+    $('#petTabBody').innerHTML = html;
+  },
+
+  async _renderLogs(userId){
+    const logs = (await DataStore.all('feed_logs'))
+      .filter(l=>l.userId===userId)
+      .sort((a,b)=>b.createdAt-a.createdAt)
+      .slice(0,100);
+    
+    const totalIn = logs.filter(l=>l.amount>0).reduce((s,l)=>s+l.amount,0);
+    const totalOut = logs.filter(l=>l.amount<0).reduce((s,l)=>s+Math.abs(l.amount),0);
+    
+    let html = `
+      <div class="overview-grid">
+        <div class="stat-card"><div class="stat-card-label">最近 100 条</div><div class="stat-card-value">${logs.length}</div></div>
+        <div class="stat-card" style="background:linear-gradient(135deg,#D4EDDA,#fff)"><div class="stat-card-label">收入</div><div class="stat-card-value" style="color:#15803d">+${totalIn}</div></div>
+        <div class="stat-card" style="background:linear-gradient(135deg,#FEE2E2,#fff)"><div class="stat-card-label">扣除</div><div class="stat-card-value" style="color:#dc2626">-${totalOut}</div></div>
+      </div>
+      
+      <div class="card" style="margin-top:12px">
+        ${logs.length===0?'<div style="text-align:center;padding:20px;color:var(--c-muted)">暂无流水</div>':
+          logs.map(l=>{
+            const isPositive = l.amount > 0;
+            const cfg = PET_FEED_TYPES[l.type] || PET_FEED_TYPES.normal;
+            return `<div style="display:flex;justify-content:space-between;padding:10px;background:var(--c-cream);border-radius:6px;margin-bottom:4px">
+              <div style="flex:1">
+                <div style="font-size:13px">${cfg.emoji} ${escapeHtml(l.desc||l.source)}</div>
+                <div style="font-size:11px;color:var(--c-muted);margin-top:2px">${new Date(l.createdAt).toLocaleString('zh-CN')}</div>
+              </div>
+              <div style="font-weight:700;color:${isPositive?'#15803d':'#dc2626'}">${isPositive?'+':''}${l.amount}</div>
+            </div>`;
+          }).join('')
+        }
+      </div>
+    `;
+    $('#petTabBody').innerHTML = html;
+  },
+
+  switchTab(key){this.curTab=key; this.refresh()},
+
+  _showChooseModal(){
+    const html = `
+      <div style="text-align:center;line-height:1.85">
+        <div style="font-size:14px;color:var(--c-ink-2);margin-bottom:14px">
+          🌸 欢迎来到宠物养成系统!请选择你的专属古风萌宠(选定后无法更换)
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
+          ${Object.entries(PET_TYPES).map(([k,v])=>`
+            <div style="padding:14px;background:var(--c-cream);border:2px solid transparent;border-radius:10px;cursor:pointer" 
+                 data-action="pet-choose" data-type="${k}"
+                 onmouseover="this.style.borderColor='var(--c-gold)'" 
+                 onmouseout="this.style.borderColor='transparent'">
+              <div style="font-size:48px">${v.emoji}</div>
+              <div style="font-weight:700;margin-top:6px;color:var(--c-primary)">${v.name}</div>
+              <div style="font-size:11px;color:var(--c-muted);margin-top:4px">${v.desc}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    Modal.open('🐾 选择你的专属萌宠', html, null);
+  },
+
+  async chooseType(type){
+    const u = Auth.current;
+    try{
+      await PetSystem.chooseType(u.id, type);
+      Modal.close();
+      const t = PET_TYPES[type];
+      Toast.success(`🎉 你选择了 ${t.emoji} ${t.name}!`);
+      setTimeout(()=>this.refresh(),300);
+    }catch(e){
+      Toast.error(e.message);
+    }
+  },
+
+  async feed(type, count){
+    const u = Auth.current;
+    try{
+      const result = await PetSystem.feed(u.id, type, count);
+      const cfg = PET_FEED_TYPES[type];
+      let msg = `🌾 投喂 ${count} 颗${cfg.name} · 饱食 +${result.satietyAdded} · 成长 +${result.growthAdded}`;
+      if(result.leveledUp){
+        msg = `🎉 升级到 Lv.${result.newLevel}!${msg}`;
+        // 升级特效
+        Toast.success(msg);
+      }else{
+        Toast.success(msg);
+      }
+      this.refresh();
+    }catch(e){
+      Toast.error(e.message);
+    }
   }
 };
 
@@ -8594,6 +9281,10 @@ document.addEventListener('click',async e=>{
     'complaints-edit':()=>ComplaintModule.openComplaint(id, t.dataset.i),
     // 🆕 v7 SOP(由 change 事件触发,这里仅占位避免 'unknown action')
     'sop-toggle':()=>{ /* handled by change event */ },
+    // 🆕 v9 PET 系统
+    'pet-tab':()=>PetModule.switchTab(t.dataset.key),
+    'pet-choose':()=>PetModule.chooseType(t.dataset.type),
+    'pet-feed':()=>PetModule.feed(t.dataset.type, parseInt(t.dataset.cnt)||1),
     'cloud-export-config':()=>CloudModule.exportConfig(),
     'cloud-import-config':()=>CloudModule.importConfig(),
     // 自定义价格
