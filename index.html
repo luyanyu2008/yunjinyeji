@@ -364,18 +364,43 @@ img{max-width:100%;display:block}
 .summary-bar .btn{margin-left:auto}
 
 /* 表格 */
-.table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--c-border)}
-table{width:100%;border-collapse:collapse;background:#fff;min-width:600px}
+.table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--c-border);-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;background:#fff}
 th{
-  background:var(--c-cream);padding:12px;text-align:left;font-weight:500;
+  background:var(--c-cream);padding:10px 8px;text-align:left;font-weight:500;
   font-size:13px;color:var(--c-ink-2);border-bottom:1px solid var(--c-border);
   white-space:nowrap;
 }
-td{padding:12px;font-size:13px;border-bottom:1px solid var(--c-border)}
+td{padding:10px 8px;font-size:13px;border-bottom:1px solid var(--c-border)}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:rgba(201,169,97,.05)}
 .td-money{font-family:var(--font-num);font-weight:700;color:var(--c-primary)}
 .td-center{text-align:center}
+
+/* 🆕 v10.1:手机适配 - 表格在窄屏自动缩小字体 + 卡片化 */
+@media (max-width:640px){
+  table{font-size:12px}
+  th{padding:8px 5px;font-size:12px}
+  td{padding:8px 5px;font-size:12px}
+  .td-money{font-size:13px}
+  /* 让超长内容截断而不是撑爆 */
+  td:not(.td-money):not(.td-center){
+    max-width:120px;overflow:hidden;text-overflow:ellipsis;
+  }
+  /* 表头允许换行,避免横向溢出 */
+  th{white-space:normal;word-break:break-word}
+}
+
+/* 🆕 v10.1:超窄屏(< 380px)进一步缩 */
+@media (max-width:380px){
+  table{font-size:11px}
+  th,td{padding:6px 4px}
+}
+
+/* 🆕 v10.1:窄屏隐藏次要列(用 .hide-narrow 标记) */
+@media (max-width:640px){
+  .hide-narrow{display:none !important}
+}
 
 /* 薪酬明细 */
 .salary-hero{
@@ -802,7 +827,7 @@ tr:hover td{background:rgba(201,169,97,.05)}
       <div class="card">
         <div class="card-title">本月全员业绩排行</div>
         <div class="table-wrap"><table id="overallTable"><thead>
-          <tr><th>排名</th><th>员工</th><th>岗位</th><th>业绩</th><th>完成率</th><th>好评数</th><th>预估薪资</th></tr>
+          <tr><th>排名</th><th>员工</th><th class="hide-narrow">岗位</th><th>业绩</th><th class="hide-narrow">完成率</th><th class="hide-narrow">好评数</th><th>预估薪资</th></tr>
         </thead><tbody></tbody></table></div>
       </div>
       <div class="card">
@@ -818,6 +843,16 @@ tr:hover td{background:rgba(201,169,97,.05)}
           💡 导出说明:文件将自动保存到浏览器默认下载文件夹(电脑端通常为 "下载/Downloads" 目录,手机端在 "下载" 或文件管理器中查看)
         </div>
       </div>
+    </div>
+
+    <!-- 🆕 v10.1 数据修复中心 -->
+    <div class="page" id="page-datafix">
+      <div class="page-header">
+        <button class="page-back" onclick="Router.go('home')">←</button>
+        <div class="page-title-bar"></div>
+        <div class="page-title">🛠️ 数据修复中心</div>
+      </div>
+      <div id="datafixContent"></div>
     </div>
 
     <!-- 个人中心【我的】 -->
@@ -3065,6 +3100,7 @@ const Router = {
       salary:()=>SalaryModule.refresh(),
       users:()=>UserModule.refresh(),
       overall:()=>OverallModule.refresh(),
+      datafix:()=>DataFixModule.refresh(),
       profile:()=>ProfileModule.refresh(),
       inspiration:()=>InspirationModule.refresh(),
       learning:()=>LearningModule.refresh(),
@@ -3257,6 +3293,7 @@ const HomeModule = {
       features.push({icon:'📈',name:'全员汇总',desc:'排行导出',page:'overall'});
       features.push({icon:'💵',name:'全员薪资',desc:'总和/明细',page:'totalsalary'});
       features.push({icon:'☁️',name:'云端同步',desc:'数据备份',page:'cloud'});
+      features.push({icon:'🛠️',name:'数据修复',desc:'迟到/重复账号',page:'datafix'});
       features.push({icon:'📋',name:'操作日志',desc:'操作留痕',page:'logs'});
     }
     // 所有人都能看排行榜
@@ -3433,7 +3470,21 @@ const PerfModule = {
   state:{items:{}, customRows:[], reviews:[]},
 
   async refresh(){
-    $('#perfDate').value=today();
+    const td=today();
+    const dateInput=$('#perfDate');
+    dateInput.value=td;
+    // 🆕 v10.1:员工只能录入今天和昨天的业绩(店长无限制)
+    if(Auth.current.role!=='admin'){
+      const yest=new Date();yest.setDate(yest.getDate()-1);
+      const yesterday=yest.toISOString().slice(0,10);
+      dateInput.min=yesterday;
+      dateInput.max=td;
+      dateInput.title='员工只能录入今天和昨天的业绩,前天及之前请联系店长';
+    }else{
+      dateInput.min='';
+      dateInput.max=td;  // 店长也不能录未来
+      dateInput.title='店长可录入任意历史日期(不含未来)';
+    }
     $('#perfOvertime').value=0;
     $('#perfLate').value=0;
     $('#perfEarly').value=0;
@@ -3444,7 +3495,7 @@ const PerfModule = {
     this.updateSummary();
 
     // 如果今日有签到迟到/早退，自动带入
-    const u=Auth.current,td=today();
+    const u=Auth.current;
     const att=await DataStore.filter('attendance',r=>r.userId===u.id&&r.date===td);
     if(att.length){
       $('#perfLate').value=att[0].lateMinutes||0;
@@ -3724,11 +3775,27 @@ const PerfModule = {
       }
     }
 
+    // 🆕 v10.1:员工日期锁定校验
+    const recDate=$('#perfDate').value||today();
+    if(Auth.current.role!=='admin'){
+      const td=today();
+      const yest=new Date();yest.setDate(yest.getDate()-1);
+      const yesterday=yest.toISOString().slice(0,10);
+      if(recDate<yesterday){
+        Toast.error(`员工只能录入今天和昨天的业绩。${recDate} 已超出范围,请联系店长录入`);
+        return;
+      }
+      if(recDate>td){
+        Toast.error('不能录入未来日期');
+        return;
+      }
+    }
+
     const rec={
       id:uuid(),
       userId:Auth.current.id,
       userName:Auth.current.name,
-      date:$('#perfDate').value||today(),
+      date:recDate,
       items,
       customerSource:$('#perfSource')?.value||'其他',
       reviews:this.state.reviews.map(r=>({
@@ -8639,39 +8706,43 @@ const TotalSalaryModule = {
 
       <div class="card">
         <div class="card-title">按岗位分组</div>
+        <div class="table-wrap">
         <table style="width:100%">
-          <thead><tr><th>岗位</th><th class="td-center">人数</th><th class="td-money">岗位业绩</th><th class="td-money">岗位薪资</th><th class="td-money">人均</th></tr></thead>
+          <thead><tr><th>岗位</th><th class="td-center">人数</th><th class="td-money">岗位业绩</th><th class="td-money hide-narrow">岗位薪资</th><th class="td-money">人均</th></tr></thead>
           <tbody>
             ${Object.entries(groups).map(([name,g])=>`
               <tr>
                 <td>${escapeHtml(name)}</td>
                 <td class="td-center">${g.count}</td>
                 <td class="td-money">¥${g.perf.toLocaleString()}</td>
-                <td class="td-money">¥${g.net.toLocaleString()}</td>
+                <td class="td-money hide-narrow">¥${g.net.toLocaleString()}</td>
                 <td class="td-money">¥${Math.round(g.net/g.count).toLocaleString()}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div class="card">
         <div class="card-title">详细人员明细</div>
+        <div class="table-wrap">
         <table style="width:100%">
-          <thead><tr><th>员工</th><th>岗位</th><th class="td-money">业绩</th><th class="td-money">应发</th><th class="td-money">扣款</th><th class="td-money">实发</th></tr></thead>
+          <thead><tr><th>员工</th><th class="hide-narrow">岗位</th><th class="td-money">业绩</th><th class="td-money hide-narrow">应发</th><th class="td-money hide-narrow">扣款</th><th class="td-money">实发</th></tr></thead>
           <tbody>
             ${rows.sort((a,b)=>b.net-a.net).map(r=>`
               <tr>
                 <td>${escapeHtml(r.user.name)}</td>
-                <td>${escapeHtml(r.level.name)}</td>
+                <td class="hide-narrow">${escapeHtml(r.level.name)}</td>
                 <td class="td-money">¥${r.totalPerf.toLocaleString()}</td>
-                <td class="td-money">¥${r.gross.toLocaleString()}</td>
-                <td class="td-money">${r.deduct?'-¥'+r.deduct.toLocaleString():'-'}</td>
+                <td class="td-money hide-narrow">¥${r.gross.toLocaleString()}</td>
+                <td class="td-money hide-narrow">${r.deduct?'-¥'+r.deduct.toLocaleString():'-'}</td>
                 <td class="td-money" style="font-weight:700;color:var(--c-primary)">¥${r.net.toLocaleString()}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
+        </div>
       </div>
     `;
   },
@@ -9315,6 +9386,347 @@ const ImgUtil = {
 };
 
 /* ============ 管理员 - 全员汇总 ============ */
+/* ============ 🆕 v10.1 店长数据修复中心 ============ */
+const DataFixModule = {
+  async refresh(){
+    const u=Auth.current;
+    if(u.role!=='admin'){
+      $('#datafixContent').innerHTML='<div class="card"><div style="text-align:center;padding:30px;color:var(--c-muted)">本页仅店长可见</div></div>';
+      return;
+    }
+    
+    const allUsers=await DataStore.all('users');
+    const allAtt=await DataStore.all('attendance');
+    const allPerf=await DataStore.all('performance');
+    
+    // 1. 检测重复账号(同名)
+    const nameMap={};
+    allUsers.forEach(u=>{
+      if(!u.name)return;
+      if(!nameMap[u.name])nameMap[u.name]=[];
+      nameMap[u.name].push(u);
+    });
+    const duplicates=Object.entries(nameMap).filter(([_,arr])=>arr.length>1);
+    
+    // 2. 检测有迟到的考勤
+    const lateRecords=allAtt
+      .filter(r=>(r.lateMinutes||0)>0 || (r.earlyMinutes||0)>0)
+      .sort((a,b)=>b.date.localeCompare(a.date))
+      .slice(0,30);
+    
+    // 3. 检测有迟到的业绩
+    const latePerf=allPerf
+      .filter(r=>(r.lateMinutes||0)>0 || (r.earlyMinutes||0)>0)
+      .sort((a,b)=>b.date.localeCompare(a.date))
+      .slice(0,30);
+    
+    const userMap=Object.fromEntries(allUsers.map(u=>[u.id,u]));
+    
+    $('#datafixContent').innerHTML=`
+      <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">🛠️ 数据修复中心</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+          店长专用工具:修正错误数据、合并重复账号、清除测试残留<br>
+          所有删除操作自动备份到回收站,30 天内可恢复
+        </div>
+      </div>
+
+      <!-- 1. 重复账号检测 -->
+      <div class="card" style="margin-top:14px">
+        <div class="card-title">👥 重复账号检测 ${duplicates.length>0?`<span class="badge badge-danger">发现 ${duplicates.length} 组</span>`:'<span class="badge badge-success">无重复</span>'}</div>
+        ${duplicates.length===0
+          ? '<div style="color:var(--c-muted);padding:8px;font-size:13px">✅ 没有同名账号</div>'
+          : duplicates.map(([name,arr])=>`
+              <div style="padding:12px;background:#FEE2E2;border-radius:6px;margin-bottom:8px">
+                <div style="font-weight:700;color:#991b1b">⚠️ ${escapeHtml(name)} 有 ${arr.length} 个账号</div>
+                ${arr.map(u=>`
+                  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;padding:8px;background:#fff;border-radius:4px;margin-top:6px">
+                    <div style="font-size:12px;flex:1;min-width:160px">
+                      <div><strong>用户名:</strong> <code>${escapeHtml(u.username||'-')}</code></div>
+                      <div style="color:var(--c-muted);margin-top:2px">
+                        创建: ${new Date(u.createdAt).toLocaleString('zh-CN')}<br>
+                        ID: ${u.id.slice(0,12)}...
+                      </div>
+                    </div>
+                    <div style="display:flex;gap:4px">
+                      <button class="btn btn-sm btn-outline" data-action="datafix-view-user" data-id="${u.id}" style="font-size:11px">查看数据</button>
+                      <button class="btn btn-sm btn-ghost" data-action="datafix-delete-user" data-id="${u.id}" style="color:var(--c-danger);font-size:11px">删除此账号</button>
+                    </div>
+                  </div>
+                `).join('')}
+                <div style="margin-top:8px;font-size:11px;color:var(--c-ink-2);line-height:1.7">
+                  💡 操作建议:点【查看数据】先确认哪个账号有实际数据,然后<strong>删掉空账号</strong>,保留有数据的那个
+                </div>
+              </div>
+            `).join('')
+        }
+      </div>
+
+      <!-- 2. 迟到/早退记录修正 -->
+      <div class="card" style="margin-top:14px">
+        <div class="card-title">⏰ 最近的迟到/早退记录(共 ${lateRecords.length} 条考勤 + ${latePerf.length} 条业绩)</div>
+        <div style="font-size:12px;color:var(--c-muted);padding:6px 0">如果是测试残留,可一键清零;不影响其他字段</div>
+        ${(lateRecords.length+latePerf.length)===0
+          ? '<div style="color:var(--c-muted);padding:8px;font-size:13px">✅ 没有迟到记录</div>'
+          : `
+            ${lateRecords.length>0?`<div style="margin-top:8px">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px">📅 考勤表中的迟到</div>
+              <div class="table-wrap"><table>
+                <thead><tr><th>日期</th><th>员工</th><th>迟到</th><th>早退</th><th>操作</th></tr></thead>
+                <tbody>
+                  ${lateRecords.map(r=>{
+                    const user=userMap[r.userId];
+                    return `<tr>
+                      <td>${r.date}</td>
+                      <td>${escapeHtml(user?.name||'未知')}</td>
+                      <td>${r.lateMinutes||0} 分</td>
+                      <td>${r.earlyMinutes||0} 分</td>
+                      <td><button class="btn btn-sm btn-ghost" data-action="datafix-clear-late-att" data-id="${r.id}" style="color:var(--c-primary);font-size:11px">清零</button></td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table></div>
+            </div>`:''}
+            ${latePerf.length>0?`<div style="margin-top:14px">
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px">📊 业绩单中的迟到</div>
+              <div class="table-wrap"><table>
+                <thead><tr><th>日期</th><th>员工</th><th>迟到</th><th>早退</th><th>操作</th></tr></thead>
+                <tbody>
+                  ${latePerf.map(r=>{
+                    const user=userMap[r.userId];
+                    return `<tr>
+                      <td>${r.date}</td>
+                      <td>${escapeHtml(user?.name||'未知')}</td>
+                      <td>${r.lateMinutes||0} 分</td>
+                      <td>${r.earlyMinutes||0} 分</td>
+                      <td><button class="btn btn-sm btn-ghost" data-action="datafix-clear-late-perf" data-id="${r.id}" style="color:var(--c-primary);font-size:11px">清零</button></td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table></div>
+            </div>`:''}
+            <div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7">
+              💡 如果想一键清零某员工 4 月的所有迟到,可以用底部的【批量清零】功能
+            </div>
+          `
+        }
+      </div>
+
+      <!-- 3. 批量清零工具 -->
+      <div class="card" style="margin-top:14px">
+        <div class="card-title">🧹 批量清零迟到/早退</div>
+        <div style="font-size:12px;color:var(--c-muted);margin-bottom:10px">选择员工 + 月份,一键清零该月所有的迟到/早退记录(不影响其他数据)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <select class="form-select" id="dfxUser" style="font-size:13px">
+            <option value="">(选择员工)</option>
+            ${allUsers.filter(u=>u.active).map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
+          </select>
+          <input type="month" class="form-input" id="dfxMonth" value="${currentMonth()}" style="font-size:13px">
+        </div>
+        <button class="btn btn-primary btn-sm" data-action="datafix-batch-clear">🧹 批量清零该月迟到/早退</button>
+      </div>
+
+      <!-- 4. 业绩锁定说明 -->
+      <div class="card" style="margin-top:14px;background:#E0F2FE">
+        <div class="card-title">🔒 业绩数据锁定规则(自动生效)</div>
+        <div style="font-size:13px;line-height:1.85;padding:6px 0">
+          • <strong>员工</strong>:只能录入<strong>当天和昨天</strong>的业绩,前天及更早的录入按钮自动禁用<br>
+          • <strong>员工</strong>:已录入的业绩<strong>不能修改/删除</strong>(防止改业绩刷工资)<br>
+          • <strong>员工</strong>:历史数据需要修改 → 点【📨 申请数据修改】发申诉单<br>
+          • <strong>店长</strong>:可以修改任意日期的业绩,无锁定<br>
+          • <strong>店长</strong>:可以审批员工的修改申请
+        </div>
+      </div>
+    `;
+  },
+
+  // 查看某账号下的数据量
+  async viewUserData(uid){
+    const u=await DataStore.get('users',uid);
+    if(!u)return;
+    const perf=(await DataStore.all('performance')).filter(r=>r.userId===uid);
+    const att=(await DataStore.all('attendance')).filter(r=>r.userId===uid);
+    const cs=(await DataStore.all('cs_reports')).filter(r=>r.userId===uid);
+    const leaves=(await DataStore.all('leaves')).filter(r=>r.userId===uid);
+    const summaries=(await DataStore.all('summaries')).filter(r=>r.userId===uid);
+    const totalPerf=perf.reduce((s,r)=>s+(r.totalAmount||0),0);
+    
+    Modal.open(`📊 ${escapeHtml(u.name)} 的数据明细`,`
+      <div style="line-height:1.85">
+        <div class="salary-line"><span>账号</span><strong style="font-family:monospace">${escapeHtml(u.username)}</strong></div>
+        <div class="salary-line"><span>创建时间</span><strong>${new Date(u.createdAt).toLocaleString('zh-CN')}</strong></div>
+        <div class="salary-line"><span>角色/等级</span><strong>${u.role==='admin'?'店长':'员工'} · ${(LEVELS[u.level]||{}).name||'-'}</strong></div>
+        <hr style="margin:10px 0;border:none;border-top:1px dashed var(--c-border)">
+        <div class="salary-line"><span>业绩记录</span><strong>${perf.length} 条 (¥${totalPerf.toFixed(2)})</strong></div>
+        <div class="salary-line"><span>考勤记录</span><strong>${att.length} 条</strong></div>
+        <div class="salary-line"><span>客资记录</span><strong>${cs.length} 条</strong></div>
+        <div class="salary-line"><span>请假记录</span><strong>${leaves.length} 条</strong></div>
+        <div class="salary-line"><span>工作总结</span><strong>${summaries.length} 条</strong></div>
+        <div style="margin-top:14px;padding:10px;background:${perf.length+att.length+cs.length===0?'#FEE2E2':'#FEF3C7'};border-radius:6px;font-size:12px;line-height:1.7">
+          ${perf.length+att.length+cs.length===0
+            ? '🗑️ <strong>这个账号几乎没有数据</strong>,可以放心删除'
+            : '⚠️ <strong>此账号有实际数据</strong>,删除会同步删除所有关联记录(可恢复)'}
+        </div>
+      </div>
+    `,null);
+  },
+
+  // 删除账号(带确认)
+  async deleteUser(uid){
+    const u=await DataStore.get('users',uid);
+    if(!u){Toast.error('账号不存在');return}
+    if(uid==='admin'){Toast.error('不能删除内置 admin 账号');return}
+    
+    const perf=(await DataStore.all('performance')).filter(r=>r.userId===uid);
+    const att=(await DataStore.all('attendance')).filter(r=>r.userId===uid);
+    const cs=(await DataStore.all('cs_reports')).filter(r=>r.userId===uid);
+    const totalRecords=perf.length+att.length+cs.length;
+    
+    Modal.open(`⚠️ 确认删除账号:${escapeHtml(u.name)}`,`
+      <div style="line-height:1.85">
+        <div style="padding:14px;background:#FEE2E2;border:2px solid #dc2626;border-radius:6px">
+          <div style="font-weight:700;color:#991b1b">即将永久删除以下账号</div>
+          <div style="margin-top:8px;font-size:13px">
+            姓名:<strong>${escapeHtml(u.name)}</strong><br>
+            用户名:<code>${escapeHtml(u.username)}</code><br>
+            数据量:<strong>${totalRecords} 条</strong>(业绩 ${perf.length}/考勤 ${att.length}/客资 ${cs.length})
+          </div>
+        </div>
+        <div style="margin-top:12px;font-size:13px;line-height:1.7">
+          ✅ 该账号将无法登录<br>
+          ✅ 所有关联数据(业绩/考勤/客资/总结/灵感/宠物)同步删除<br>
+          ✅ 所有删除自动备份到回收站,30 天内可恢复<br>
+          ⚠️ 同步到云端后所有设备生效
+        </div>
+        <div style="margin-top:14px">
+          <label class="form-label required">输入"删除 ${escapeHtml(u.name)}"以确认</label>
+          <input class="form-input" id="dfxConfirm" placeholder="例如:删除 ${escapeHtml(u.name)}">
+        </div>
+      </div>
+    `,async()=>{
+      const expected=`删除 ${u.name}`;
+      const got=$('#dfxConfirm')?.value.trim();
+      if(got!==expected){Toast.error(`请准确输入「${expected}」`);return false}
+      
+      try{
+        // 删除关联数据
+        let deleted=0;
+        for(const r of perf){await DataStore.delete('performance',r.id);deleted++}
+        for(const r of att){await DataStore.delete('attendance',r.id);deleted++}
+        for(const r of cs){await DataStore.delete('cs_reports',r.id);deleted++}
+        const leaves=(await DataStore.all('leaves')).filter(r=>r.userId===uid);
+        for(const r of leaves){await DataStore.delete('leaves',r.id);deleted++}
+        const summaries=(await DataStore.all('summaries')).filter(r=>r.userId===uid);
+        for(const r of summaries){await DataStore.delete('summaries',r.id);deleted++}
+        const insp=(await DataStore.all('inspirations')).filter(r=>r.userId===uid);
+        for(const r of insp){await DataStore.delete('inspirations',r.id);deleted++}
+        const sop=(await DataStore.all('sop_records')).filter(r=>r.userId===uid);
+        for(const r of sop){await DataStore.delete('sop_records',r.id);deleted++}
+        // 删除宠物 + 流水
+        try{await DataStore.delete('pets',uid)}catch(e){}
+        const fl=(await DataStore.all('feed_logs')).filter(r=>r.userId===uid);
+        for(const r of fl){await DataStore.delete('feed_logs',r.id);deleted++}
+        // 最后删账号
+        await DataStore.delete('users',uid);
+        
+        Logger.log('delete_user_full',`删除账号 ${u.name} (${u.username}) 及 ${deleted} 条数据`);
+        Toast.success(`✅ 已删除账号及 ${deleted} 条数据`);
+        this.refresh();
+      }catch(e){
+        Toast.error('删除失败:'+e.message);
+        console.error('[DataFix]',e);
+        return false;
+      }
+    });
+  },
+
+  // 清零某条考勤的迟到/早退
+  async clearLateAtt(id){
+    const r=await DataStore.get('attendance',id);
+    if(!r)return;
+    const before=`迟到 ${r.lateMinutes||0} / 早退 ${r.earlyMinutes||0}`;
+    r.lateMinutes=0;
+    r.earlyMinutes=0;
+    if(r.status==='late'||r.status==='early')r.status='normal';
+    r.updatedAt=Date.now();
+    await DataStore.put('attendance',r);
+    Logger.log('clear_late_att',`清零考勤 ${r.date} 的迟到/早退 (原: ${before})`);
+    Toast.success(`✅ 已清零 ${r.date} 的迟到/早退`);
+    this.refresh();
+  },
+
+  // 清零某条业绩的迟到/早退
+  async clearLatePerf(id){
+    const r=await DataStore.get('performance',id);
+    if(!r)return;
+    const before=`迟到 ${r.lateMinutes||0} / 早退 ${r.earlyMinutes||0}`;
+    r.lateMinutes=0;
+    r.earlyMinutes=0;
+    r.updatedAt=Date.now();
+    await DataStore.put('performance',r);
+    Logger.log('clear_late_perf',`清零业绩 ${r.date} 的迟到/早退 (原: ${before})`);
+    Toast.success(`✅ 已清零 ${r.date} 的迟到/早退`);
+    this.refresh();
+  },
+
+  // 批量清零某员工某月的迟到
+  async batchClear(){
+    const uid=$('#dfxUser').value;
+    const month=$('#dfxMonth').value;
+    if(!uid){Toast.error('请选择员工');return}
+    if(!month){Toast.error('请选择月份');return}
+    const u=await DataStore.get('users',uid);
+    if(!u)return;
+    
+    const att=(await DataStore.all('attendance')).filter(r=>
+      r.userId===uid && r.date && r.date.startsWith(month) && ((r.lateMinutes||0)>0||(r.earlyMinutes||0)>0)
+    );
+    const perf=(await DataStore.all('performance')).filter(r=>
+      r.userId===uid && r.date && r.date.startsWith(month) && ((r.lateMinutes||0)>0||(r.earlyMinutes||0)>0)
+    );
+    
+    if(att.length+perf.length===0){
+      Toast.error(`${u.name} 在 ${month} 没有迟到记录`);
+      return;
+    }
+    
+    Modal.open(`🧹 批量清零确认`,`
+      <div style="line-height:1.85">
+        <div style="padding:14px;background:#FEF3C7;border-radius:6px">
+          即将清零 <strong>${escapeHtml(u.name)}</strong> 在 <strong>${month}</strong> 的所有迟到/早退记录:<br><br>
+          • 考勤记录:<strong>${att.length}</strong> 条<br>
+          • 业绩记录:<strong>${perf.length}</strong> 条<br><br>
+          ✅ 只清迟到/早退分钟数<br>
+          ✅ 不影响业绩、加班、好评等其他字段<br>
+          ✅ 操作可在日志中追溯
+        </div>
+      </div>
+    `,async()=>{
+      try{
+        let n=0;
+        for(const r of att){
+          r.lateMinutes=0;r.earlyMinutes=0;
+          if(r.status==='late'||r.status==='early')r.status='normal';
+          r.updatedAt=Date.now();
+          await DataStore.put('attendance',r);n++;
+        }
+        for(const r of perf){
+          r.lateMinutes=0;r.earlyMinutes=0;
+          r.updatedAt=Date.now();
+          await DataStore.put('performance',r);n++;
+        }
+        Logger.log('batch_clear_late',`批量清零 ${u.name} ${month} 共 ${n} 条迟到/早退`);
+        Toast.success(`✅ 已清零 ${n} 条记录`);
+        this.refresh();
+      }catch(e){
+        Toast.error('批量清零失败:'+e.message);
+        return false;
+      }
+    });
+  }
+};
+
+
 const OverallModule = {
   async refresh(){
     const users=(await DataStore.all('users')).filter(u=>u.active && u.role!=='admin');
@@ -9337,10 +9749,10 @@ const OverallModule = {
       return `<tr>
         <td><strong>${rank}</strong></td>
         <td>${escapeHtml(r.u.name)}</td>
-        <td>${r.s.level.name}</td>
+        <td class="hide-narrow">${r.s.level.name}</td>
         <td class="td-money">${fmtMoney(r.s.totalPerf)}</td>
-        <td>${r.s.ratio}%</td>
-        <td class="td-center">${r.s.reviewCount}</td>
+        <td class="hide-narrow">${r.s.ratio}%</td>
+        <td class="td-center hide-narrow">${r.s.reviewCount}</td>
         <td class="td-money">${fmtMoney(r.s.net)}</td>
       </tr>`;
     }).join('')||`<tr><td colspan="7" class="td-center" style="padding:30px;color:var(--c-muted)">暂无数据</td></tr>`;
@@ -9618,6 +10030,12 @@ document.addEventListener('click',async e=>{
     'rm-sum-img':()=>SummaryModule.rmImg(i),
     'reset-pwd':()=>UserModule.resetPwd(id),
     'edit-user':()=>UserModule.editUser(id),
+    // 🆕 v10.1 数据修复
+    'datafix-view-user':()=>DataFixModule.viewUserData(id),
+    'datafix-delete-user':()=>DataFixModule.deleteUser(id),
+    'datafix-clear-late-att':()=>DataFixModule.clearLateAtt(id),
+    'datafix-clear-late-perf':()=>DataFixModule.clearLatePerf(id),
+    'datafix-batch-clear':()=>DataFixModule.batchClear(),
     'toggle-user':()=>UserModule.toggle(id),
     // 我的
     'logout':()=>{
