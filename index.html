@@ -1649,6 +1649,13 @@ const V10_THEME_CSS = `
   0%,100%{transform:translateY(0)}
   50%{transform:translateY(-8px)}
 }
+@keyframes pet-shake{
+  0%,100%{transform:translateY(0) rotate(0)}
+  20%{transform:translateY(-12px) rotate(-5deg)}
+  40%{transform:translateY(-4px) rotate(4deg)}
+  60%{transform:translateY(-10px) rotate(-3deg)}
+  80%{transform:translateY(-2px) rotate(2deg)}
+}
 .pet-emoji-big.hungry{
   filter:grayscale(0.6) drop-shadow(0 2px 6px rgba(0,0,0,0.2));
   animation:none;opacity:0.7;
@@ -1924,15 +1931,51 @@ const PetSystem = {
     return {pet, satietyAdded, growthAdded, leveledUp, newLevel};
   },
 
-  // 选择宠物种类
+  // 选择宠物种类(首次)
   async chooseType(userId, type){
     if(!PET_TYPES[type])throw new Error('宠物类型不存在');
     const pet = await this.getOrCreate(userId);
     if(pet.type)throw new Error('已经选过宠物了,无法更换');
     pet.type = type;
+    pet.changeUsed = false;  // 🆕 v10.2:换宠机会未使用
     pet.updatedAt = Date.now();
     await DataStore.put('pets', pet);
     return pet;
+  },
+
+  // 🆕 v10.2:更换宠物(每位员工一生只有一次机会)
+  async changeType(userId, newType){
+    if(!PET_TYPES[newType])throw new Error('宠物类型不存在');
+    const pet = await this.getOrCreate(userId);
+    if(!pet.type)throw new Error('您还没有宠物,请先选择');
+    if(pet.type === newType)throw new Error('这就是您当前的宠物,无需更换');
+    if(pet.changeUsed)throw new Error('您已经使用过换宠机会,无法再次更换');
+    
+    const oldType = pet.type;
+    pet.type = newType;
+    pet.changeUsed = true;
+    pet.changedAt = Date.now();
+    pet.previousType = oldType;
+    pet.updatedAt = Date.now();
+    await DataStore.put('pets', pet);
+    
+    // 写流水
+    await DataStore.put('feed_logs', {
+      id: `fl_${Date.now()}_change`,
+      userId,
+      date: today(),
+      type: 'normal',
+      amount: 0,
+      source: 'change_pet',
+      desc: `换宠:${PET_TYPES[oldType].name} → ${PET_TYPES[newType].name}`,
+      createdAt: Date.now()
+    });
+    return pet;
+  },
+
+  // 🆕 v10.2:检查是否还有换宠机会
+  canChange(pet){
+    return !!(pet && pet.type && !pet.changeUsed);
   },
 
   // ⭐ 业绩录入时调用:按订单档位发饲料(给录入业绩的化妆师)
@@ -8250,15 +8293,37 @@ const PetModule = {
     
     let html = `
       <div class="pet-stage v10-paper-card v10-kintsugi" style="text-align:center">
-        <div class="pet-bubble">${escapeHtml(bubble)}</div>
-        <div class="pet-emoji-big ${isHungry?'hungry':''}">${t.emoji}</div>
+        <div class="pet-bubble" id="petBubble">${escapeHtml(bubble)}</div>
+        <div class="pet-emoji-big ${isHungry?'hungry':''}" id="petInteract" data-action="pet-interact" 
+             style="cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent" 
+             title="点我互动">${t.emoji}</div>
         <div style="font-size:20px;font-weight:700;color:var(--c-primary);margin-top:6px;letter-spacing:2px">${t.name}</div>
         <div style="font-size:13px;color:var(--c-muted)">${t.desc}</div>
         <div style="margin-top:10px">${stateBadge}</div>
         <div style="margin-top:14px;display:inline-block;padding:6px 14px;background:linear-gradient(135deg,#FFD700,#FFA500);color:#fff;border-radius:20px;font-weight:700;letter-spacing:1px">
           Lv.${pet.level} · ${lvInfo.title}
         </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--c-muted)">💡 点击宠物可与其互动</div>
       </div>
+      
+      ${PetSystem.canChange(pet)?`
+        <div class="card v10-paper-card" style="margin-top:12px;border:2px dashed var(--c-gold)">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div style="flex:1;min-width:200px">
+              <div style="font-size:14px;font-weight:600;color:var(--c-primary)">🎁 您还有 1 次换宠机会</div>
+              <div style="font-size:12px;color:var(--c-ink-2);margin-top:4px;line-height:1.6">
+                如果不喜欢现在的萌宠,可以更换一次(<strong>仅限一次,慎选</strong>)<br>
+                等级、饱食度、心情值、饲料库存全部保留
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm" data-action="pet-change-show">🔄 更换宠物</button>
+          </div>
+        </div>
+      `:pet.changeUsed?`
+        <div class="card" style="margin-top:12px;background:var(--c-cream);font-size:12px;color:var(--c-muted);text-align:center;padding:10px">
+          ❌ 换宠机会已用完${pet.changedAt?` · ${new Date(pet.changedAt).toLocaleDateString('zh-CN')} 从 ${PET_TYPES[pet.previousType]?.name||'未知'} 换为 ${PET_TYPES[pet.type].name}`:''}
+        </div>
+      `:''}
       
       <div class="card" style="margin-top:12px">
         <div style="display:grid;grid-template-columns:1fr;gap:12px">
@@ -8312,6 +8377,22 @@ const PetModule = {
         }).join('')}
         ${totalFeed===0?`<div style="text-align:center;padding:20px;color:var(--c-muted);font-size:13px">😴 饲料用完了,赶快做业绩补给吧!</div>`:''}
       </div>
+      
+      <!-- 🆕 v10.2:换宠物机会 -->
+      ${PetSystem.canChange(pet) ? `
+        <div class="card v10-paper-card" style="margin-top:12px;text-align:center;border:2px dashed var(--c-gold)">
+          <div style="font-size:14px;color:var(--c-ink-2);margin-bottom:10px;line-height:1.7">
+            🎁 您还有 <strong style="color:var(--c-primary);font-size:16px">1 次</strong> 换宠机会(仅一次,慎选)<br>
+            <span style="font-size:12px;color:var(--c-muted)">等级、成长值、饲料库存全部保留</span>
+          </div>
+          <button class="btn btn-outline btn-sm" data-action="pet-change" style="border-color:var(--c-gold);color:var(--c-gold-dark);font-weight:600">🔄 更换宠物</button>
+        </div>
+      ` : pet.changeUsed ? `
+        <div style="margin-top:12px;padding:10px;background:var(--c-cream);border-radius:6px;font-size:12px;color:var(--c-muted);text-align:center;line-height:1.7">
+          ❌ 换宠机会已用完<br>
+          <span style="font-size:11px">${pet.changedAt?new Date(pet.changedAt).toLocaleDateString('zh-CN'):''} 从 ${pet.previousType?(PET_TYPES[pet.previousType]||{}).name||'未知':'未知'} 换为 ${PET_TYPES[pet.type].name}</span>
+        </div>
+      ` : ''}
       
       <div class="card" style="margin-top:12px">
         <div class="card-title">📚 等级权益预览</div>
@@ -8485,6 +8566,48 @@ const PetModule = {
     Modal.open('🐾 选择你的专属萌宠', html, null);
   },
 
+  // 🆕 v10.2:换宠 modal
+  async _showChangeModal(){
+    const u = Auth.current;
+    const pet = await PetSystem.getOrCreate(u.id);
+    if(!PetSystem.canChange(pet)){
+      Toast.error('您已经使用过换宠机会');
+      return;
+    }
+    const curT = PET_TYPES[pet.type];
+    // 过滤掉当前的宠物
+    const choices = Object.entries(PET_TYPES).filter(([k])=>k!==pet.type);
+    const html = `
+      <div style="line-height:1.85">
+        <div style="padding:14px;background:#FEF3C7;border:2px solid #f59e0b;border-radius:8px;margin-bottom:14px">
+          <div style="font-weight:700;color:#b45309;font-size:14px">⚠️ 换宠特别提示</div>
+          <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+            • 您当前的宠物:<strong>${curT.emoji} ${curT.name}</strong> · Lv.${pet.level}<br>
+            • 这是您<strong style="color:#dc2626">仅有的 1 次</strong>换宠机会,确认后<strong>无法再换</strong><br>
+            • 换宠后:<strong>等级、成长值、饲料库存</strong>全部保留<br>
+            • 心情值、饱食度会重置为 80(新伙伴还在适应)
+          </div>
+        </div>
+        <div style="text-align:center;font-size:14px;color:var(--c-ink-2);margin-bottom:10px">
+          请选择新的萌宠伙伴(不含当前的 ${curT.name}):
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px">
+          ${choices.map(([k,v])=>`
+            <div style="padding:14px;background:var(--c-cream);border:2px solid transparent;border-radius:10px;cursor:pointer;transition:all .2s" 
+                 data-action="pet-do-change" data-type="${k}"
+                 onmouseover="this.style.borderColor='var(--c-gold)';this.style.transform='scale(1.05)'" 
+                 onmouseout="this.style.borderColor='transparent';this.style.transform='scale(1)'">
+              <div style="font-size:48px">${v.emoji}</div>
+              <div style="font-weight:700;margin-top:6px;color:var(--c-primary)">${v.name}</div>
+              <div style="font-size:11px;color:var(--c-muted);margin-top:4px">${v.desc}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    Modal.open('🔄 更换专属萌宠(仅一次机会)', html, null);
+  },
+
   async chooseType(type){
     const u = Auth.current;
     try{
@@ -8496,6 +8619,95 @@ const PetModule = {
     }catch(e){
       Toast.error(e.message);
     }
+  },
+
+  // 🆕 v10.2:执行换宠(二次确认)
+  // 🆕 v10.2:点击宠物互动(气泡 + 抖动 + 心情+1)
+  async interact(){
+    const u = Auth.current;
+    const pet = await PetSystem.getOrCreate(u.id);
+    if(!pet.type)return;
+    
+    // 抽一句新台词
+    const newBubble = PetSystem.pickBubble(pet, '');
+    const bubbleEl = document.getElementById('petBubble');
+    const petEl = document.getElementById('petInteract');
+    
+    if(bubbleEl){
+      bubbleEl.style.animation = 'none';
+      bubbleEl.textContent = newBubble;
+      // 触发 reflow 重新播放动画
+      void bubbleEl.offsetWidth;
+      bubbleEl.style.animation = 'bubble-pop .4s ease-out';
+    }
+    if(petEl){
+      petEl.style.animation = 'none';
+      void petEl.offsetWidth;
+      petEl.style.animation = 'pet-shake .5s ease-in-out';
+      setTimeout(()=>{ petEl.style.animation = 'pet-float 3s ease-in-out infinite'; }, 500);
+    }
+    
+    // 心情值 +1(每次互动,有冷却)
+    const now = Date.now();
+    const lastInteract = pet._lastInteract || 0;
+    if(now - lastInteract > 60000){  // 1 分钟冷却
+      pet._lastInteract = now;
+      const before = pet.mood;
+      pet.mood = Math.min(PetSystem.moodMax(pet), pet.mood + 1);
+      pet.updatedAt = now;
+      await DataStore.put('pets', pet);
+      if(pet.mood > before){
+        // 不打扰式提示(已经有抖动+气泡反馈)
+        console.log(`[Pet] 互动 心情 +1 → ${pet.mood}`);
+      }
+    }
+  },
+
+  async doChange(newType){
+    const u = Auth.current;
+    const newT = PET_TYPES[newType];
+    if(!newT){Toast.error('宠物类型不存在');return}
+    
+    const pet = await PetSystem.getOrCreate(u.id);
+    const oldT = PET_TYPES[pet.type];
+    
+    // 二次确认
+    Modal.open(`⚠️ 最后确认:换为 ${newT.name}`, `
+      <div style="line-height:1.85;text-align:center">
+        <div style="font-size:18px;margin:14px 0">
+          ${oldT.emoji} <span style="font-size:24px;color:var(--c-muted);margin:0 12px">→</span> ${newT.emoji}
+        </div>
+        <div style="font-weight:700;margin-bottom:14px">
+          ${oldT.name} 换为 ${newT.name}
+        </div>
+        <div style="padding:14px;background:#FEE2E2;border-radius:8px;text-align:left">
+          <div style="font-weight:700;color:#991b1b;font-size:13px">这是不可逆操作:</div>
+          <div style="font-size:12px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+            ✅ 等级 Lv.${pet.level} 保留<br>
+            ✅ 成长值 ${pet.growth} 保留<br>
+            ✅ 饲料库存全部保留<br>
+            ⚠️ 心情/饱食度重置为 80<br>
+            ❌ <strong>不能再次换宠</strong>
+          </div>
+        </div>
+        <div style="margin-top:14px;font-size:13px;color:var(--c-muted)">
+          确认后这只 ${oldT.name} 将告别你
+        </div>
+      </div>
+    `, async()=>{
+      try{
+        const newPet = await PetSystem.changeType(u.id, newType);
+        // 重置心情和饱食度
+        newPet.mood = 80;
+        newPet.satiety = 80;
+        await DataStore.put('pets', newPet);
+        Toast.success(`🎉 你的新伙伴 ${newT.emoji} ${newT.name} 上岗了!`);
+        setTimeout(()=>this.refresh(),300);
+      }catch(e){
+        Toast.error(e.message);
+        return false;
+      }
+    });
   },
 
   async feed(type, count){
@@ -8725,19 +8937,20 @@ const TotalSalaryModule = {
       </div>
 
       <div class="card">
-        <div class="card-title">详细人员明细</div>
+        <div class="card-title">详细人员明细 <span style="font-size:11px;color:var(--c-muted);font-weight:400">(点击行查看完整薪资组成)</span></div>
         <div class="table-wrap">
         <table style="width:100%">
-          <thead><tr><th>员工</th><th class="hide-narrow">岗位</th><th class="td-money">业绩</th><th class="td-money hide-narrow">应发</th><th class="td-money hide-narrow">扣款</th><th class="td-money">实发</th></tr></thead>
+          <thead><tr><th>员工</th><th class="hide-narrow">岗位</th><th class="td-money">业绩</th><th class="td-money hide-narrow">应发</th><th class="td-money hide-narrow">扣款</th><th class="td-money">实发</th><th class="td-center">操作</th></tr></thead>
           <tbody>
             ${rows.sort((a,b)=>b.net-a.net).map(r=>`
-              <tr>
-                <td>${escapeHtml(r.user.name)}</td>
+              <tr style="cursor:pointer" data-action="ts-view-detail" data-id="${r.user.id}" data-month="${month}">
+                <td><strong>${escapeHtml(r.user.name)}</strong></td>
                 <td class="hide-narrow">${escapeHtml(r.level.name)}</td>
                 <td class="td-money">¥${r.totalPerf.toLocaleString()}</td>
                 <td class="td-money hide-narrow">¥${r.gross.toLocaleString()}</td>
                 <td class="td-money hide-narrow">${r.deduct?'-¥'+r.deduct.toLocaleString():'-'}</td>
                 <td class="td-money" style="font-weight:700;color:var(--c-primary)">¥${r.net.toLocaleString()}</td>
+                <td class="td-center"><button class="btn btn-sm btn-ghost" data-action="ts-view-detail" data-id="${r.user.id}" data-month="${month}" onclick="event.stopPropagation()" style="font-size:11px;padding:4px 8px;color:var(--c-primary)">📋 详情</button></td>
               </tr>
             `).join('')}
           </tbody>
@@ -8745,6 +8958,212 @@ const TotalSalaryModule = {
         </div>
       </div>
     `;
+  },
+
+  // 🆕 v10.2:店长查看某员工的完整薪资详情 + 业绩明细
+  async viewEmployeeDetail(userId, month){
+    const u=await DataStore.get('users',userId);
+    if(!u){Toast.error('员工不存在');return}
+    if(!month)month=currentMonth();
+    
+    // 拉取该员工本月数据
+    const allPerf=(await DataStore.all('performance')).filter(r=>r.userId===userId);
+    const allAtt=(await DataStore.all('attendance')).filter(r=>r.userId===userId);
+    const allLeaves=(await DataStore.all('leaves')).filter(r=>r.userId===userId);
+    const allSummaries=(await DataStore.all('summaries')).filter(r=>r.userId===userId);
+    const allCs=(await DataStore.all('cs_reports')).filter(r=>r.userId===userId);
+    const allSop=(await DataStore.all('sop_records')).filter(r=>r.userId===userId);
+    
+    const monthPerf=allPerf.filter(r=>r.date && r.date.startsWith(month));
+    const monthAtt=allAtt.filter(r=>r.date && r.date.startsWith(month));
+    const monthLeaves=allLeaves.filter(r=>(r.startDate||'').startsWith(month));
+    const monthSummaries=allSummaries.filter(r=>r.date && r.date.startsWith(month));
+    
+    // 计算薪酬
+    const userWithCs={
+      ...u,
+      _csReports:allCs.filter(r=>isSameMonth(r.bookingDate,month)),
+      _sopRecords:allSop.filter(r=>r.date && r.date.startsWith(month))
+    };
+    const s=Calc.calcMonthSalary(userWithCs,allPerf,allAtt,allLeaves,month,allSummaries);
+    
+    // 生成月份选项
+    const monthOpts=[];
+    const dCur=new Date();
+    for(let i=0;i<12;i++){
+      const m=`${dCur.getFullYear()}-${String(dCur.getMonth()+1).padStart(2,'0')}`;
+      monthOpts.push(m);
+      dCur.setMonth(dCur.getMonth()-1);
+    }
+    
+    // 业绩明细汇总
+    const perfTotal=monthPerf.reduce((sum,r)=>sum+(r.totalAmount||0),0);
+    const perfCount=monthPerf.reduce((sum,r)=>sum+(r.items||[]).length,0);
+    const perfReviewCount=monthPerf.reduce((sum,r)=>sum+(r.reviews||[]).length,0);
+    const perfOT=monthPerf.reduce((sum,r)=>sum+(r.overtimeHours||0),0);
+    const perfLate=monthPerf.reduce((sum,r)=>sum+(r.lateMinutes||0),0);
+    const perfEarly=monthPerf.reduce((sum,r)=>sum+(r.earlyMinutes||0),0);
+    
+    // 渲染薪酬组成块
+    let salaryHtml='';
+    if(s.kind==='customer'){
+      salaryHtml=`
+        <div style="padding:14px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border-radius:8px;text-align:center">
+          <div style="font-size:13px;color:var(--c-muted)">${month} 实发薪资(纯提成)</div>
+          <div style="font-family:var(--font-num);font-size:30px;font-weight:700;color:var(--c-primary)">¥${(s.net||0).toLocaleString()}</div>
+        </div>
+        <table style="width:100%;margin-top:10px;font-size:13px">
+          <tr><td>摄影组提成</td><td class="td-money">¥${s.photoCommission} (${s.photoGroups} 组×¥${PHOTO_COMMISSION})</td></tr>
+          <tr><td>妆造组提成</td><td class="td-money">¥${s.makeupCommission} (${s.makeupGroups} 组×¥${MAKEUP_COMMISSION})</td></tr>
+          ${s.tierBonus?`<tr><td>🎉 阶梯奖励</td><td class="td-money" style="color:#15803d">+¥${s.tierBonus} (${s.tierName})</td></tr>`:''}
+          ${s.reviewReward?`<tr><td>好评奖</td><td class="td-money">¥${s.reviewReward} (${s.reviewCount} 位客户)</td></tr>`:''}
+          ${s.tenureBonus?`<tr><td>🎋 云锦同行奖</td><td class="td-money" style="color:#15803d">+¥${s.tenureBonus} (满 ${s.tenureYears} 年)</td></tr>`:''}
+          ${s.blockedCount?`<tr><td style="color:#dc2626">⚠️ 暂停结算(高级未解决客诉)</td><td class="td-money" style="color:#dc2626">-¥${s.blockedAmount} (${s.blockedCount} 单)</td></tr>`:''}
+          <tr style="border-top:2px solid var(--c-primary)"><td><strong>实发合计</strong></td><td class="td-money" style="color:var(--c-primary);font-size:16px"><strong>¥${(s.net||0).toLocaleString()}</strong></td></tr>
+        </table>
+        <div style="margin-top:10px;padding:8px;background:var(--c-cream);border-radius:6px;font-size:12px">
+          📊 转化率: ${s.conversionRate}% (${s.dealCsCount}/${s.totalCsCount} 成交)
+        </div>
+      `;
+    }else if(s.kind==='intern'){
+      salaryHtml=`
+        <div style="padding:14px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border-radius:8px;text-align:center">
+          <div style="font-size:13px;color:var(--c-muted)">${month} 实发薪资(实习生)</div>
+          <div style="font-family:var(--font-num);font-size:30px;font-weight:700;color:var(--c-primary)">¥${(s.net||0).toLocaleString()}</div>
+        </div>
+        <table style="width:100%;margin-top:10px;font-size:13px">
+          <tr><td>出勤补助</td><td class="td-money">¥${s.allowance} (${s.attendDays}天×¥${s.dailyAllowance})</td></tr>
+          <tr><td>加班费</td><td class="td-money">¥${s.overtimePay} (${s.overtimeHours}h×¥${OT_RATE})</td></tr>
+          <tr><td>好评奖</td><td class="td-money">¥${s.reviewReward} (${s.reviewCount} 条)</td></tr>
+          ${s.tenureBonus?`<tr><td>🎋 云锦同行奖</td><td class="td-money" style="color:#15803d">+¥${s.tenureBonus}</td></tr>`:''}
+          ${(s.deduct||0)>0?`<tr><td>扣款</td><td class="td-money" style="color:#dc2626">-¥${s.deduct}</td></tr>`:''}
+          <tr style="border-top:2px solid var(--c-primary)"><td><strong>实发合计</strong></td><td class="td-money" style="color:var(--c-primary);font-size:16px"><strong>¥${(s.net||0).toLocaleString()}</strong></td></tr>
+        </table>
+      `;
+    }else{
+      // 化妆师
+      salaryHtml=`
+        <div style="padding:14px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border-radius:8px;text-align:center">
+          <div style="font-size:13px;color:var(--c-muted)">${month} 实发薪资</div>
+          <div style="font-family:var(--font-num);font-size:30px;font-weight:700;color:var(--c-primary)">¥${(s.net||0).toLocaleString()}</div>
+          <div style="font-size:12px;color:var(--c-muted);margin-top:4px">完成度 ${s.ratio}% · 业绩 ¥${(s.totalPerf||0).toLocaleString()}/¥${(s.target||0).toLocaleString()}</div>
+        </div>
+        <table style="width:100%;margin-top:10px;font-size:13px">
+          <tr><td>底薪</td><td class="td-money">¥${s.baseSalary}</td></tr>
+          <tr><td>全勤奖 ${s.attBonusLost?'<span style="color:#dc2626;font-size:11px">(未达全勤)</span>':'<span style="color:#15803d;font-size:11px">(达成)</span>'}</td><td class="td-money">¥${s.attBonus}</td></tr>
+          ${s.tenureBonus?`<tr><td>🎋 云锦同行奖</td><td class="td-money" style="color:#15803d">+¥${s.tenureBonus} (满 ${s.tenureYears} 年)</td></tr>`:''}
+          <tr><td>岗位工资</td><td class="td-money">¥${s.jobPay} (基准 ¥${s.jobBase}, 完成 ${s.ratio}%)</td></tr>
+          <tr><td>超额提成</td><td class="td-money">¥${s.bonus} (超 ¥${(s.overAmount||0).toLocaleString()})</td></tr>
+          <tr><td>加班费</td><td class="td-money">¥${s.overtimePay} (${s.overtimeHours}h×¥${OT_RATE})</td></tr>
+          <tr><td>好评奖</td><td class="td-money">¥${s.reviewReward} (${s.reviewCount} 条)</td></tr>
+          <tr style="background:#FEE2E2"><td>迟到/早退扣</td><td class="td-money" style="color:#dc2626">-¥${s.lateEarlyFine} (${s.lateMinutes||0}迟+${s.earlyMinutes||0}早)</td></tr>
+          <tr style="background:#FEE2E2"><td>请假扣</td><td class="td-money" style="color:#dc2626">-¥${s.leaveFine} (${s.leaveDays} 天)</td></tr>
+          ${(s.noSummaryFine||0)>0?`<tr style="background:#FEE2E2"><td>未写总结扣</td><td class="td-money" style="color:#dc2626">-¥${s.noSummaryFine} (${s.missingSummaryDays} 天)</td></tr>`:''}
+          ${(s.sopFine||0)>0?`<tr style="background:#FEE2E2"><td>SOP 未达标扣</td><td class="td-money" style="color:#dc2626">-¥${s.sopFine} (${s.sopLateShifts} 班次)</td></tr>`:''}
+          <tr style="border-top:2px solid var(--c-primary);background:var(--c-cream)"><td><strong>应发合计</strong></td><td class="td-money"><strong>¥${(s.gross||0).toLocaleString()}</strong></td></tr>
+          <tr style="background:var(--c-cream)"><td><strong>扣款合计</strong></td><td class="td-money" style="color:#dc2626"><strong>-¥${(s.deduct||0).toLocaleString()}</strong></td></tr>
+          <tr style="border-top:2px solid var(--c-primary)"><td><strong>实发合计</strong></td><td class="td-money" style="color:var(--c-primary);font-size:16px"><strong>¥${(s.net||0).toLocaleString()}</strong></td></tr>
+        </table>
+      `;
+    }
+    
+    // 业绩明细列表(按日期分组)
+    let perfDetailHtml='';
+    if(monthPerf.length>0){
+      const sortedPerf=[...monthPerf].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+      perfDetailHtml=`
+        <div class="table-wrap" style="max-height:300px;overflow-y:auto">
+          <table style="width:100%;font-size:12px">
+            <thead><tr><th>日期</th><th>明细</th><th class="td-money">业绩</th><th class="td-center hide-narrow">加班</th><th class="td-center hide-narrow">迟到</th><th class="td-center hide-narrow">好评</th></tr></thead>
+            <tbody>
+              ${sortedPerf.map(r=>{
+                const detail=(r.items||[]).map(i=>`${i.typeName||i.type}×${i.count}`).join('、');
+                const lateMin=(r.lateMinutes||0)+(r.earlyMinutes||0);
+                return `<tr>
+                  <td>${r.date}</td>
+                  <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(detail)}">${escapeHtml(detail)}</td>
+                  <td class="td-money">¥${(r.totalAmount||0).toLocaleString()}</td>
+                  <td class="td-center hide-narrow">${r.overtimeHours||0}h</td>
+                  <td class="td-center hide-narrow">${lateMin>0?`<span style="color:#dc2626">${lateMin}分</span>`:'-'}</td>
+                  <td class="td-center hide-narrow">${(r.reviews||[]).length||'-'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }else{
+      perfDetailHtml='<div style="text-align:center;padding:20px;color:var(--c-muted);font-size:13px">该月无业绩记录</div>';
+    }
+    
+    Modal.open(`📋 ${escapeHtml(u.name)} · 完整薪资详情`,`
+      <div style="line-height:1.85">
+        <!-- 月份切换 -->
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;padding:10px;background:var(--c-cream);border-radius:6px">
+          <div style="font-size:13px">
+            <strong>查看月份:</strong>
+            <select class="form-select" id="tsDetailMonth" style="width:auto;display:inline-block;font-size:13px;padding:4px 10px">
+              ${monthOpts.map(m=>`<option value="${m}" ${m===month?'selected':''}>${m}${m===currentMonth()?' (本月)':''}</option>`).join('')}
+            </select>
+          </div>
+          <div style="font-size:11px;color:var(--c-muted)">${escapeHtml(u.username||'')} · ${(LEVELS[u.level]||{}).name||'-'}${u.joinDate?` · 入职 ${u.joinDate}`:''}</div>
+        </div>
+        
+        <!-- 薪酬组成块 -->
+        ${salaryHtml}
+        
+        <!-- 业绩明细 -->
+        <div style="margin-top:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px">
+            <div style="font-weight:600">📊 ${month} 业绩明细 (共 ${monthPerf.length} 天 / ${perfCount} 项 / ¥${perfTotal.toLocaleString()})</div>
+            <button class="btn btn-sm btn-outline" data-action="ts-quick-add-perf" data-id="${userId}" data-month="${month}" style="font-size:11px">📝 代录业绩</button>
+          </div>
+          ${perfDetailHtml}
+        </div>
+        
+        <!-- 月度统计卡 -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:14px">
+          <div style="text-align:center;padding:10px;background:var(--c-cream);border-radius:6px">
+            <div style="font-size:11px;color:var(--c-muted)">出勤</div>
+            <div style="font-size:18px;font-weight:700;color:var(--c-primary)">${monthAtt.length}</div>
+            <div style="font-size:10px;color:var(--c-muted)">天</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:var(--c-cream);border-radius:6px">
+            <div style="font-size:11px;color:var(--c-muted)">加班</div>
+            <div style="font-size:18px;font-weight:700;color:var(--c-primary)">${perfOT}h</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:${perfLate>0?'#FEE2E2':'var(--c-cream)'};border-radius:6px">
+            <div style="font-size:11px;color:var(--c-muted)">迟到/早退</div>
+            <div style="font-size:18px;font-weight:700;color:${perfLate+perfEarly>0?'#dc2626':'var(--c-primary)'}">${perfLate+perfEarly}</div>
+            <div style="font-size:10px;color:var(--c-muted)">分钟</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:var(--c-cream);border-radius:6px">
+            <div style="font-size:11px;color:var(--c-muted)">请假</div>
+            <div style="font-size:18px;font-weight:700;color:var(--c-primary)">${monthLeaves.length}</div>
+            <div style="font-size:10px;color:var(--c-muted)">条</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:var(--c-cream);border-radius:6px">
+            <div style="font-size:11px;color:var(--c-muted)">好评</div>
+            <div style="font-size:18px;font-weight:700;color:var(--c-primary)">${perfReviewCount}</div>
+            <div style="font-size:10px;color:var(--c-muted)">条</div>
+          </div>
+          <div style="text-align:center;padding:10px;background:var(--c-cream);border-radius:6px">
+            <div style="font-size:11px;color:var(--c-muted)">工作总结</div>
+            <div style="font-size:18px;font-weight:700;color:var(--c-primary)">${monthSummaries.length}</div>
+            <div style="font-size:10px;color:var(--c-muted)">篇</div>
+          </div>
+        </div>
+      </div>
+    `,null);
+    
+    // 绑定月份切换
+    setTimeout(()=>{
+      const sel=$('#tsDetailMonth');
+      if(sel)sel.addEventListener('change',e=>{
+        Modal.close();
+        setTimeout(()=>this.viewEmployeeDetail(userId, e.target.value), 100);
+      });
+    },50);
   },
 
   _monthOptions(){
@@ -9526,6 +9945,16 @@ const DataFixModule = {
         <button class="btn btn-primary btn-sm" data-action="datafix-batch-clear">🧹 批量清零该月迟到/早退</button>
       </div>
 
+      <!-- 🆕 v10.2 店长代录业绩 -->
+      <div class="card" style="margin-top:14px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div class="card-title">📝 店长代录业绩</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-bottom:10px;line-height:1.7">
+          为某位员工补录历史业绩,或员工忘记录入时由店长代为录入。<br>
+          支持选择任意员工 + 任意日期 + 任意档位,自动发宠物饲料,操作日志会留痕。
+        </div>
+        <button class="btn btn-primary btn-sm" data-action="datafix-add-perf">📝 打开代录业绩</button>
+      </div>
+
       <!-- 4. 业绩锁定说明 -->
       <div class="card" style="margin-top:14px;background:#E0F2FE">
         <div class="card-title">🔒 业绩数据锁定规则(自动生效)</div>
@@ -9723,6 +10152,184 @@ const DataFixModule = {
         return false;
       }
     });
+  },
+
+  // 🆕 v10.2:店长代员工录入业绩(指定员工 + 任意日期)
+  async adminAddPerf(presetUserId, presetDate){
+    if(Auth.current.role!=='admin'){Toast.error('仅店长可使用此功能');return}
+    
+    const allUsers=(await DataStore.all('users')).filter(u=>u.active && u.role!=='admin' && (LEVELS[u.level]||{}).type!=='customer');
+    if(allUsers.length===0){Toast.error('没有可录入业绩的员工');return}
+    
+    const td=today();
+    const userOpt=allUsers.map(u=>`<option value="${u.id}" ${u.id===presetUserId?'selected':''}>${escapeHtml(u.name)} (${(LEVELS[u.level]||{}).name||'-'})</option>`).join('');
+    
+    Modal.open(`📝 店长代录业绩`,`
+      <div style="line-height:1.85">
+        <div style="padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7;margin-bottom:14px">
+          💡 此功能仅店长可用,适用场景:员工忘记录业绩、补录历史业绩、修正错单<br>
+          ⚠️ 提交后会以该员工身份录入,自动发宠物饲料,操作日志会留痕
+        </div>
+        
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-item">
+            <label class="form-label required">员工</label>
+            <select class="form-select" id="adpUser">
+              ${userOpt}
+            </select>
+          </div>
+          <div class="form-item">
+            <label class="form-label required">日期</label>
+            <input type="date" class="form-input" id="adpDate" value="${presetDate||td}" max="${td}">
+          </div>
+        </div>
+        
+        <div class="form-item" style="margin-top:10px">
+          <label class="form-label required">业绩档位</label>
+          <select class="form-select" id="adpType">
+            <option value="custom_129" data-price="129">¥129 套餐</option>
+            <option value="custom_188" data-price="188">¥188 套餐</option>
+            <option value="custom_199" data-price="199" selected>¥199 套餐</option>
+            <option value="custom_299" data-price="299">¥299 套餐</option>
+            <option value="custom_399" data-price="399">¥399 套餐</option>
+            <option value="custom_499" data-price="499">¥499 套餐</option>
+            <option value="__custom__">🛠️ 其他自定义价格</option>
+          </select>
+        </div>
+        
+        <div class="form-item" id="adpCustomBox" style="margin-top:10px;display:none">
+          <label class="form-label">自定义单价(元)</label>
+          <input type="number" class="form-input" id="adpCustomPrice" placeholder="例如:158" step="1" min="0">
+        </div>
+        
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+          <div class="form-item">
+            <label class="form-label required">数量(支持 0.5)</label>
+            <input type="number" class="form-input" id="adpCount" value="1" step="0.5" min="0.5">
+          </div>
+          <div class="form-item">
+            <label class="form-label">加班(小时)</label>
+            <input type="number" class="form-input" id="adpOT" value="0" step="0.5" min="0">
+          </div>
+        </div>
+        
+        <div class="form-item" style="margin-top:10px">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="adpReview"> 客户给了带图好评(+15 颗饲料)
+          </label>
+        </div>
+        
+        <div id="adpPreview" style="margin-top:14px;padding:10px;background:var(--c-cream);border-radius:6px;font-size:12px"></div>
+      </div>
+    `, async()=>{
+      const userId=$('#adpUser').value;
+      const date=$('#adpDate').value;
+      const typeSel=$('#adpType');
+      const isCustom=typeSel.value==='__custom__';
+      let price=isCustom?parseFloat($('#adpCustomPrice').value)||0:parseFloat(typeSel.options[typeSel.selectedIndex].dataset.price);
+      const count=parseFloat($('#adpCount').value)||0;
+      const ot=parseFloat($('#adpOT').value)||0;
+      const hasReview=$('#adpReview').checked;
+      
+      if(!userId){Toast.error('请选择员工');return false}
+      if(!date){Toast.error('请选择日期');return false}
+      if(price<=0){Toast.error('请输入有效单价');return false}
+      if(count<=0){Toast.error('请输入有效数量');return false}
+      
+      const user=await DataStore.get('users',userId);
+      if(!user){Toast.error('员工不存在');return false}
+      
+      try{
+        const subtotal=Math.round(price*count*100)/100;
+        const items=[{
+          type:`custom_${Date.now()}`,
+          typeName:`¥${price} × ${count}`,
+          unitPrice:price,
+          count:count,
+          subtotal:subtotal,
+          images:[]
+        }];
+        
+        const reviews=hasReview?[{
+          customerName:'(店长代录)',
+          platforms:['xhs'],
+          note:'店长代录的好评'
+        }]:[];
+        
+        const rec={
+          id:uuid(),
+          userId:userId,
+          userName:user.name,
+          date:date,
+          items:items,
+          customerSource:'其他',
+          reviews:reviews,
+          overtimeHours:ot,
+          lateMinutes:0,
+          earlyMinutes:0,
+          totalAmount:subtotal,
+          createdAt:Date.now(),
+          updatedAt:Date.now(),
+          createdByAdmin:Auth.current.id,  // 🆕 标记为店长代录
+          adminCreatorName:Auth.current.name
+        };
+        
+        await DataStore.put('performance',rec);
+        Logger.log('admin_add_perf',`代录业绩 ${user.name} ${date} ¥${subtotal}`);
+        
+        // 自动发饲料
+        let feedMsg='';
+        try{
+          if(typeof PetSystem!=='undefined'){
+            const feed=await PetSystem.grantForPerformance(userId,rec);
+            if(feed>0)feedMsg=` · 宠物 +${feed} 颗饲料 🌾`;
+          }
+        }catch(e){console.warn('[Pet]',e)}
+        
+        Toast.success(`✅ 已代 ${user.name} 录入 ${date} 业绩 ¥${subtotal}${feedMsg}`);
+        this.refresh();
+      }catch(e){
+        Toast.error('录入失败:'+e.message);
+        console.error('[AdminAddPerf]',e);
+        return false;
+      }
+    });
+    
+    // 绑定预览 + 自定义切换
+    setTimeout(()=>{
+      const updatePreview=()=>{
+        const typeSel=$('#adpType');
+        const isCustom=typeSel.value==='__custom__';
+        $('#adpCustomBox').style.display=isCustom?'block':'none';
+        const price=isCustom?(parseFloat($('#adpCustomPrice').value)||0):(parseFloat(typeSel.options[typeSel.selectedIndex].dataset.price)||0);
+        const count=parseFloat($('#adpCount').value)||0;
+        const ot=parseFloat($('#adpOT').value)||0;
+        const hasReview=$('#adpReview').checked;
+        const subtotal=Math.round(price*count*100)/100;
+        // 估算饲料
+        let feed=0;
+        const presetMap={129:20,188:25,199:30,299:40,399:55,499:70};
+        if(presetMap[price])feed=Math.round(presetMap[price]*count);
+        else feed=Math.round(price*0.15*count);
+        if(hasReview)feed+=15;
+        const otPay=ot*10;
+        $('#adpPreview').innerHTML=`
+          <div style="font-weight:600;color:var(--c-primary);margin-bottom:6px">📊 录入预览</div>
+          <div>业绩金额:<strong>¥${subtotal}</strong></div>
+          <div>加班费:<strong>¥${otPay}</strong>(${ot}h × ¥10)</div>
+          <div>宠物饲料:<strong>+${feed} 颗</strong></div>
+        `;
+      };
+      const ids=['adpType','adpCustomPrice','adpCount','adpOT','adpReview'];
+      ids.forEach(id=>{
+        const el=$('#'+id);
+        if(el){
+          el.addEventListener('change',updatePreview);
+          el.addEventListener('input',updatePreview);
+        }
+      });
+      updatePreview();
+    },80);
   }
 };
 
@@ -10036,6 +10643,10 @@ document.addEventListener('click',async e=>{
     'datafix-clear-late-att':()=>DataFixModule.clearLateAtt(id),
     'datafix-clear-late-perf':()=>DataFixModule.clearLatePerf(id),
     'datafix-batch-clear':()=>DataFixModule.batchClear(),
+    'datafix-add-perf':()=>DataFixModule.adminAddPerf(),
+    // 🆕 v10.2 全员薪资 → 个人详情
+    'ts-view-detail':()=>TotalSalaryModule.viewEmployeeDetail(id, t.dataset.month),
+    'ts-quick-add-perf':()=>{Modal.close();setTimeout(()=>DataFixModule.adminAddPerf(id, t.dataset.month?(t.dataset.month+'-01'):today()),200)},
     'toggle-user':()=>UserModule.toggle(id),
     // 我的
     'logout':()=>{
@@ -10107,6 +10718,10 @@ document.addEventListener('click',async e=>{
     // 🆕 v9 PET 系统
     'pet-tab':()=>PetModule.switchTab(t.dataset.key),
     'pet-choose':()=>PetModule.chooseType(t.dataset.type),
+    'pet-change':()=>PetModule._showChangeModal(),
+    'pet-do-change':()=>PetModule.doChange(t.dataset.type),
+    'pet-change-show':()=>PetModule._showChangeModal(),
+    'pet-interact':()=>PetModule.interact(),
     'pet-feed':()=>PetModule.feed(t.dataset.type, parseInt(t.dataset.cnt)||1),
     'cloud-export-config':()=>CloudModule.exportConfig(),
     'cloud-import-config':()=>CloudModule.importConfig(),
