@@ -1464,6 +1464,161 @@ const PET_SATIETY_MAX_BASE = 100;
 const PET_SATIETY_LOW = 30;
 const PET_MOOD_MAX_BASE = 100;
 const PET_MOOD_MAX_HIGH = 120;  // 7 级后
+
+// 🆕 v10:宠物情境气泡台词(按状态/事件随机抽一条)
+const PET_BUBBLES = {
+  // 饥饿状态
+  hungry: [
+    '主人...肚肚咕咕叫了 🥺',
+    '能给我一口饲料吗 我快要昏过去了...',
+    '今天还没吃东西呢 (｡•́︿•̀｡)',
+    '业绩做起来嘛~ 我等着开饭呢 🍡',
+    '主人主人,我在角落里萎靡了 ఠ_ఠ'
+  ],
+  // 心情极佳
+  happy: [
+    '今天好开心呀!想跟主人转圈圈 ✨',
+    '主人最棒了 我们一起冲榜单!',
+    '心情爆棚~ 成长 +20% 加速中 🌟',
+    '感觉自己今天美若天仙 🌸',
+    '主人的努力我都看见啦~ 加油!'
+  ],
+  // 心情低落
+  sad: [
+    '主人... 我有点不开心 😢',
+    '今天发生不好的事了吗 我陪你...',
+    '抱抱 一起加油好不好',
+    '心情值低成长慢一半 我们打起精神 💪'
+  ],
+  // 普通待机
+  idle: [
+    '主人辛苦啦~ 喝口水歇会儿 ☕',
+    '今天的客户还顺利吗?',
+    '我在帮主人守着饲料库存 📦',
+    '排行榜冲一冲呗 我看好你!',
+    '同事的宠物在隔壁串门呢 要不要去看看 🐾',
+    '主人的笑容是我最好的饲料 🌸'
+  ],
+  // 升级时
+  levelUp: [
+    '叮咚~ 我升级啦!主人辛苦了 🎉',
+    '哇!感觉自己又变美了 ✨',
+    '解锁新权益 GET!冲冲冲 🚀',
+    '主人主人 看我新形象!'
+  ],
+  // 完成大单(¥499 或 摄影加推)
+  bigOrder: [
+    '一单 499 主人威武!给我加餐了!',
+    '哇!这单赏赐丰厚呀 🍡🍡🍡',
+    '主人技术真好 推单都能成!',
+    '嗝~ 吃撑了 但还想继续!'
+  ],
+  // 客诉时
+  complaint: [
+    '诶... 客户不满意吗 我心情清零了 💔',
+    '没关系 下次主人会做得更好的',
+    '跟主人一起反思一下 改进改进 🤔',
+    '伤心一会会就好啦 抱抱主人...'
+  ],
+  // 下班打卡时
+  signOff: [
+    '主人辛苦啦 准时下班 +10 颗饲料到账 🌾',
+    '今天累了吧 早点休息 我守着家 🌙',
+    '明天又是元气满满的一天!',
+    '回家路上注意安全鸭 🌸'
+  ],
+  // 萎靡(饱食<30 + 心情<40)
+  wilted: [
+    '主人... 我快撑不住了 😱',
+    '又饿又难过 完了完了...',
+    '救救我!给我一口饲料就行!',
+    '宠物快没气了 主人再不出业绩我就...'
+  ]
+};
+
+// 🆕 v10:UI 美化 - 全局 CSS 注入(纸纹 + 金缮线条)
+const V10_THEME_CSS = `
+.v10-paper-card{
+  background:linear-gradient(135deg,#FFFAF0 0%,#FFF8DC 100%);
+  background-image:
+    radial-gradient(circle at 20% 30%,rgba(196,168,107,0.04) 0%,transparent 30%),
+    radial-gradient(circle at 80% 70%,rgba(212,175,55,0.04) 0%,transparent 30%);
+  border:1px solid rgba(196,168,107,0.3);
+  position:relative;
+  border-radius:8px;
+  box-shadow:0 2px 12px rgba(196,168,107,0.08);
+}
+.v10-paper-card::before{
+  content:'';position:absolute;inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.7 0 0 0 0 0.55 0 0 0 0 0.3 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events:none;border-radius:inherit;opacity:0.6;
+}
+.v10-kintsugi{
+  position:relative;
+}
+.v10-kintsugi::after{
+  content:'';position:absolute;
+  top:8px;left:8px;right:8px;bottom:8px;
+  border:1px dashed rgba(212,175,55,0.4);
+  border-radius:4px;pointer-events:none;
+}
+.pet-bubble{
+  position:relative;display:inline-block;
+  background:#fff;border:2px solid var(--c-gold);
+  padding:10px 14px;border-radius:14px;
+  font-size:13px;color:var(--c-ink);
+  max-width:280px;line-height:1.6;
+  box-shadow:0 2px 8px rgba(196,168,107,0.15);
+  margin:14px auto;
+  animation:bubble-pop .4s ease-out;
+}
+.pet-bubble::before{
+  content:'';position:absolute;
+  bottom:-10px;left:50%;transform:translateX(-50%);
+  border:8px solid transparent;
+  border-top-color:var(--c-gold);
+}
+.pet-bubble::after{
+  content:'';position:absolute;
+  bottom:-7px;left:50%;transform:translateX(-50%);
+  border:7px solid transparent;
+  border-top-color:#fff;
+}
+@keyframes bubble-pop{
+  0%{transform:scale(0.5);opacity:0}
+  60%{transform:scale(1.05)}
+  100%{transform:scale(1);opacity:1}
+}
+.pet-stage{
+  position:relative;
+  background:linear-gradient(180deg,#FFF8E7 0%,#FFEFD6 50%,#FFE0B2 100%);
+  border-radius:14px;
+  padding:24px 14px 14px;
+  overflow:hidden;
+  box-shadow:inset 0 0 30px rgba(212,175,55,0.15);
+}
+.pet-stage::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    radial-gradient(ellipse at 50% 100%,rgba(255,200,100,0.3) 0%,transparent 50%),
+    radial-gradient(circle at 15% 25%,rgba(255,255,255,0.5) 0%,transparent 8%),
+    radial-gradient(circle at 85% 35%,rgba(255,255,255,0.3) 0%,transparent 6%);
+  pointer-events:none;
+}
+.pet-emoji-big{
+  font-size:128px;line-height:1.2;
+  filter:drop-shadow(0 4px 12px rgba(196,168,107,0.4));
+  animation:pet-float 3s ease-in-out infinite;
+}
+@keyframes pet-float{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(-8px)}
+}
+.pet-emoji-big.hungry{
+  filter:grayscale(0.6) drop-shadow(0 2px 6px rgba(0,0,0,0.2));
+  animation:none;opacity:0.7;
+}
+`;
 // 岗位标签:全员/化妆师/礼服/店长/晚班/早班/轮值
 // category:卫生清洁 / 物品清洗 / 员工技术 / 个人卫生 / 垃圾处理 / 设施清洁 / 收银点单 / 出单
 const SOP_SHIFTS = {
@@ -1807,6 +1962,22 @@ const PetSystem = {
   // ⭐ SOP 完成时调用
   async grantForSopComplete(userId, shift){
     await this.grant(userId, 'normal', 15, 'sop', `${shift} SOP 达标`);
+  },
+
+  // 🆕 v10:根据宠物当前状态 + 上下文选一句台词
+  pickBubble(pet, context){
+    let pool;
+    // 萎靡(双重低)
+    if(pet.satiety<30 && pet.mood<40)pool=PET_BUBBLES.wilted;
+    else if(context==='complaint')pool=PET_BUBBLES.complaint;
+    else if(context==='signOff')pool=PET_BUBBLES.signOff;
+    else if(context==='bigOrder')pool=PET_BUBBLES.bigOrder;
+    else if(context==='levelUp')pool=PET_BUBBLES.levelUp;
+    else if(pet.satiety<PET_SATIETY_LOW)pool=PET_BUBBLES.hungry;
+    else if(pet.mood>=80)pool=PET_BUBBLES.happy;
+    else if(pet.mood<40)pool=PET_BUBBLES.sad;
+    else pool=PET_BUBBLES.idle;
+    return pool[Math.floor(Math.random()*pool.length)];
   }
 };
 
@@ -1908,14 +2079,18 @@ const Calc = {
       const bonusResult=this.calcBonus(overAmount);
       const bonus=bonusResult.total;
 
+      // 🆕 v10:云锦同行奖(满 1 年 +¥100/月,满 2 年 +¥200,以此类推)
+      const tenureBonus = this.calcTenureBonus(user.joinDate);
+      const tenureYears = Math.floor(this.monthsSinceJoin(user.joinDate)/12);
+
       // 合计
-      const gross = BASE_SALARY + attBonus + jobPay + bonus + overtimePay + reviewReward;
+      const gross = BASE_SALARY + attBonus + jobPay + bonus + overtimePay + reviewReward + tenureBonus;
       const deduct = lateEarlyFine + leaveFine;
       const net = Math.max(0, gross - deduct);
 
       // 始终输出调试日志(可在浏览器 F12 查看)
       console.log(`[Calc] ${user.name}(${level.name}) 业绩¥${totalPerf} 应发¥${gross} 实发¥${net}`,
-        {底薪:BASE_SALARY,全勤:attBonus,岗位工资:jobPay,提成:bonus,加班费:overtimePay,好评奖:reviewReward,迟早扣:lateEarlyFine,请假扣:leaveFine,完成率:Math.round(ratio*1000)/10+'%'});
+        {底薪:BASE_SALARY,全勤:attBonus,岗位工资:jobPay,提成:bonus,加班费:overtimePay,好评奖:reviewReward,云锦同行奖:tenureBonus,迟早扣:lateEarlyFine,请假扣:leaveFine,完成率:Math.round(ratio*1000)/10+'%'});
 
       return {
         user,level, kind:'mua',
@@ -1925,6 +2100,7 @@ const Calc = {
         overAmount, bonus, bonusSegments:bonusResult.segments,
         overtimeHours, overtimePay,
         reviewCount, reviewReward,
+        tenureBonus, tenureYears,
         lateMinutes:lateMin, earlyMinutes:earlyMin, lateEarlyFine,
         leaveDays:paidLeaveDays, leaveFine,
         gross, deduct, net:Math.round(net*100)/100
@@ -1940,6 +2116,7 @@ const Calc = {
         overAmount:0, bonus:0, bonusSegments:[],
         overtimeHours:0, overtimePay:0,
         reviewCount:0, reviewReward:0,
+        tenureBonus:0, tenureYears:0,
         lateMinutes:0, earlyMinutes:0, lateEarlyFine:0,
         leaveDays:0, leaveFine:0,
         gross: BASE_SALARY+ATTENDANCE_BONUS, deduct:0,
@@ -1947,6 +2124,23 @@ const Calc = {
         _error: e.message
       };
     }
+  },
+
+  // 🆕 v10:计算入职月数
+  monthsSinceJoin(joinDate){
+    if(!joinDate)return 0;
+    const j=new Date(joinDate);
+    if(isNaN(j))return 0;
+    const now=new Date();
+    return (now.getFullYear()-j.getFullYear())*12 + (now.getMonth()-j.getMonth());
+  },
+
+  // 🆕 v10:云锦同行奖(满 1 年 ¥100/月,满 2 年 ¥200,以此类推)
+  calcTenureBonus(joinDate){
+    const months = this.monthsSinceJoin(joinDate);
+    const years = Math.floor(months/12);  // 满 1 年(12 个月)起
+    if(years < 1)return 0;
+    return years * 100;  // 满 1 年 +100,满 2 年 +200,满 3 年 +300...
   },
 
   // 实习生月度薪酬(50元/日补助 + 加班费 + 好评奖,无底薪/全勤/岗位工资/提成/扣款)
@@ -1987,7 +2181,11 @@ const Calc = {
     const reviewCount=perf.reduce((s,r)=>s+(r.reviews||[]).length,0);
     const reviewReward=perf.reduce((s,r)=>s+num(this.calcReviewsReward(r.reviews)),0);
 
-    const gross = allowance + overtimePay + reviewReward;
+    // 🆕 v10:云锦同行奖
+    const tenureBonus = this.calcTenureBonus(user.joinDate);
+    const tenureYears = Math.floor(this.monthsSinceJoin(user.joinDate)/12);
+
+    const gross = allowance + overtimePay + reviewReward + tenureBonus;
     const net = gross;
 
     return {
@@ -1999,6 +2197,7 @@ const Calc = {
       overAmount:0, bonus:0, bonusSegments:[],
       overtimeHours, overtimePay,
       reviewCount, reviewReward,
+      tenureBonus, tenureYears,
       lateMinutes:0, earlyMinutes:0, lateEarlyFine:0,
       leaveDays:0, leaveFine:0,
       gross, deduct:0, net:Math.round(net*100)/100
@@ -2163,7 +2362,11 @@ const Calc = {
       }
     });
     
-    const gross=photoCommission+makeupCommission+tierBonus+reviewReward;
+    // 🆕 v10:云锦同行奖
+    const tenureBonus = this.calcTenureBonus(user.joinDate);
+    const tenureYears = Math.floor(this.monthsSinceJoin(user.joinDate)/12);
+    
+    const gross=photoCommission+makeupCommission+tierBonus+reviewReward+tenureBonus;
     const net=gross;
     
     // 转化率分母排除 cancel
@@ -2184,6 +2387,8 @@ const Calc = {
       // 🆕 v8 阶梯奖励 + 好评奖
       tierBonus, tierName,
       reviewCount, reviewReward,
+      // 🆕 v10 云锦同行奖
+      tenureBonus, tenureYears,
       // 兼容化妆师字段
       baseSalary:0, attBonus:0, attBonusLost:false,
       totalPerf:0, ratio:0,
@@ -3545,7 +3750,15 @@ const PerfModule = {
         if(typeof PetSystem!=='undefined'){
           const petFeed = await PetSystem.grantForPerformance(rec.userId, rec);
           if(petFeed > 0){
-            Toast.success(`业绩录入成功 ✨ +${petFeed} 颗饲料 🌾`);
+            // 🆕 v10:大单(含 ¥499 或单笔 ≥ 70 颗饲料)触发宠物气泡台词
+            const hasBigOrder = items.some(it=>it.unitPrice>=499);
+            if(hasBigOrder){
+              const pet = await PetSystem.getOrCreate(rec.userId);
+              const bubble = PetSystem.pickBubble(pet, 'bigOrder');
+              Toast.success(`💎 大单成交!+${petFeed} 颗 · ${pet.type?(PET_TYPES[pet.type].emoji+' '):'🐾 '}${bubble}`);
+            }else{
+              Toast.success(`业绩录入成功 ✨ +${petFeed} 颗饲料 🌾`);
+            }
           }else{
             Toast.success('业绩录入成功 ✨');
           }
@@ -4229,8 +4442,11 @@ const AIEngine = {
 
 /* ============ 薪酬模块 ============ */
 const SalaryModule = {
+  curMonth: '',  // 🆕 v10:可切换月份(空=本月)
+  
   async refresh(){
     const u=Auth.current;
+    const targetMonth = this.curMonth || currentMonth();
     
     // 店长看全店薪资总览(跳转到 totalsalary 页更专业)
     if(u.role==='admin'){
@@ -4264,15 +4480,35 @@ const SalaryModule = {
     const summaries=await DataStore.all('summaries');
     const csReports=await DataStore.all('cs_reports');
     const sopAll=await DataStore.all('sop_records');
-    const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,currentMonth())),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(currentMonth()))};
-    const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,currentMonth(),summaries);
+    const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,targetMonth)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(targetMonth))};
+    const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,targetMonth,summaries);
 
+    // 🆕 v10:月份筛选器(本月 + 过去 11 个月)
+    const monthOpts = [];
+    const dCur = new Date();
+    for(let i=0;i<12;i++){
+      const m = `${dCur.getFullYear()}-${String(dCur.getMonth()+1).padStart(2,'0')}`;
+      monthOpts.push(m);
+      dCur.setMonth(dCur.getMonth()-1);
+    }
+    const monthFilterHtml = `
+      <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+        <div style="font-size:13px">
+          <strong>📅 月份:</strong>
+          <select class="form-select" id="salaryMonth" style="width:auto;display:inline-block;font-size:13px;padding:4px 10px">
+            ${monthOpts.map(m=>`<option value="${m}" ${m===targetMonth?'selected':''}>${m}${m===currentMonth()?' (本月)':''}</option>`).join('')}
+          </select>
+        </div>
+        <span style="font-size:11px;color:var(--c-muted)">可回溯任意历史月份的薪资明细</span>
+      </div>
+    `;
+    
     // 客服独立展示(纯提成)
     if(s.kind==='customer'){
-      $('#salaryContent').innerHTML=`
+      $('#salaryContent').innerHTML=monthFilterHtml+`
         <div class="salary-hero">
           <div style="position:relative;z-index:1">
-            <div class="salary-hero-label">${currentMonth()} 预估薪资(纯提成)</div>
+            <div class="salary-hero-label">${targetMonth} 预估薪资(纯提成)</div>
             <div class="salary-hero-value">${fmtMoney(s.net)}</div>
             <div class="salary-hero-sub">${s.level.name} · 转化率 ${s.conversionRate}% · 已成交 ${s.dealCsCount}/${s.totalCsCount}</div>
           </div>
@@ -4333,15 +4569,20 @@ const SalaryModule = {
           </div>
         </div>`:''}
       `;
+      // 🆕 v10:绑定月份切换
+      setTimeout(()=>{
+        const sel=$('#salaryMonth');
+        if(sel)sel.addEventListener('change',e=>{this.curMonth=e.target.value;this.refresh()});
+      },50);
       return;
     }
 
     // 实习生独立简化展示
     if(s.kind==='intern'){
-      $('#salaryContent').innerHTML=`
+      $('#salaryContent').innerHTML=monthFilterHtml+`
         <div class="salary-hero">
           <div style="position:relative;z-index:1">
-            <div class="salary-hero-label">${currentMonth()} 预估薪资</div>
+            <div class="salary-hero-label">${targetMonth} 预估薪资</div>
             <div class="salary-hero-value">${fmtMoney(s.net)}</div>
             <div class="salary-hero-sub">${s.level.name} · 出勤 ${s.attendDays} 天 · 业绩 ${fmtMoney(s.totalPerf)}</div>
           </div>
@@ -4381,11 +4622,16 @@ const SalaryModule = {
           </div>
         </div>
       `;
+      // 🆕 v10:绑定月份切换
+      setTimeout(()=>{
+        const sel=$('#salaryMonth');
+        if(sel)sel.addEventListener('change',e=>{this.curMonth=e.target.value;this.refresh()});
+      },50);
       return;
     }
 
     // 化妆师业绩构成
-    const monthPerf=perf.filter(r=>r.userId===u.id&&isSameMonth(r.date,currentMonth()));
+    const monthPerf=perf.filter(r=>r.userId===u.id&&isSameMonth(r.date,targetMonth));
     const compose={};
     monthPerf.forEach(r=>(r.items||[]).forEach(i=>{
       compose[i.type]=compose[i.type]||{name:i.typeName||i.type,count:0,amount:0,price:i.unitPrice};
@@ -4414,10 +4660,10 @@ const SalaryModule = {
       bonusDetail='<div class="salary-line" style="color:var(--c-muted)">未达基准业绩，暂无提成</div>';
     }
 
-    $('#salaryContent').innerHTML=`
+    $('#salaryContent').innerHTML=monthFilterHtml+`
       <div class="salary-hero">
         <div style="position:relative;z-index:1">
-          <div class="salary-hero-label">${currentMonth()} 预估薪资</div>
+          <div class="salary-hero-label">${targetMonth} 预估薪资</div>
           <div class="salary-hero-value">${fmtMoney(s.net)}</div>
           <div class="salary-hero-sub">${s.level.name} · 目标 ${fmtMoney(s.target)} · 完成 ${s.ratio}%</div>
           <div class="salary-progress"><div class="salary-progress-fill" style="width:${Math.min(100,s.ratio)}%"></div></div>
@@ -4425,15 +4671,20 @@ const SalaryModule = {
       </div>
 
       <div class="salary-section">
-        <div class="salary-section-title"><span>① 固定部分</span><span class="salary-section-value">${fmtMoney(s.baseSalary+s.attBonus)}</span></div>
+        <div class="salary-section-title"><span>① 固定部分</span><span class="salary-section-value">${fmtMoney(s.baseSalary+s.attBonus+(s.tenureBonus||0))}</span></div>
         <div class="salary-section-body">
           <div class="salary-line"><span>底薪</span><strong>${fmtMoney(s.baseSalary)}</strong></div>
           <div class="salary-line">
             <span>全勤奖 ${s.attBonusLost?'<span class="badge badge-danger">未达全勤</span>':'<span class="badge badge-success">达成</span>'}</span>
             <strong>${fmtMoney(s.attBonus)}</strong>
           </div>
+          ${(s.tenureBonus||0)>0?`<div class="salary-line">
+            <span>🎋 云锦同行奖 <span class="badge badge-success">满 ${s.tenureYears} 年</span></span>
+            <strong style="color:#15803d">+${fmtMoney(s.tenureBonus)}</strong>
+          </div>`:''}
           <div style="font-size:11px;color:var(--c-muted);padding:4px 8px;background:var(--c-cream);border-radius:4px;margin-top:6px">
-            💡 全勤奖规则:迟到/早退 → 扣全勤;事假病假累计超 2 天 → 扣全勤;调休不扣
+            💡 全勤奖规则:迟到/早退 → 扣全勤;事假病假累计超 2 天 → 扣全勤;调休不扣<br>
+            🎋 云锦同行奖:满 1 年 +¥100/月,满 2 年 +¥200,以此类推(无上限)
           </div>
         </div>
       </div>
@@ -4493,7 +4744,19 @@ const SalaryModule = {
         </div>
       </div>
     `;
+    
+    // 🆕 v10:绑定月份切换
+    setTimeout(()=>{
+      const sel=$('#salaryMonth');
+      if(sel)sel.addEventListener('change',e=>{
+        this.curMonth=e.target.value;
+        this.refresh();
+      });
+    },50);
   },
+
+  // 🆕 v10:月份切换
+  switchMonth(m){this.curMonth=m; this.refresh()},
 
   async _loadAdminQuickView(){
     const month=currentMonth();
@@ -4569,17 +4832,24 @@ const UserModule = {
       const lvl=(LEVELS[u.level]||{}).name||'-';
       const status=u.active?'<span class="badge badge-success">在职</span>':'<span class="badge badge-danger">已离职</span>';
       const created=new Date(u.createdAt).toLocaleDateString('zh-CN');
+      // 🆕 v10:云锦同行奖徽章
+      const tenureMonths=Calc.monthsSinceJoin(u.joinDate);
+      const tenureYears=Math.floor(tenureMonths/12);
+      const tenureBadge=tenureYears>=1
+        ? `<span class="badge badge-success" title="入职 ${u.joinDate||'-'} · 满 ${tenureYears} 年">🎋 +¥${tenureYears*100}/月</span>`
+        : (u.joinDate?`<span class="badge" style="font-size:11px;color:var(--c-muted)">入职 ${tenureMonths} 月</span>`:'');
       const toggleBtn=u.active
         ? `<button class="btn btn-sm btn-ghost" data-action="toggle-user" data-id="${u.id}" style="color:var(--c-danger)">办理离职</button>`
         : `<button class="btn btn-sm btn-ghost" data-action="toggle-user" data-id="${u.id}" style="color:var(--c-success)">恢复在职</button>`;
       return `<tr>
         <td>${escapeHtml(u.username)}</td>
-        <td>${escapeHtml(u.name)}</td>
+        <td>${escapeHtml(u.name)}${u.phone?` <span style="font-size:11px;color:var(--c-muted)">📞${escapeHtml(u.phone)}</span>`:''}</td>
         <td>${role}</td>
-        <td>${lvl}</td>
+        <td>${lvl} ${tenureBadge}</td>
         <td>${status}</td>
         <td>${created}</td>
         <td>
+          <button class="btn btn-sm btn-ghost" data-action="edit-user" data-id="${u.id}" style="color:var(--c-primary)">📝 档案</button>
           <button class="btn btn-sm btn-ghost" data-action="reset-pwd" data-id="${u.id}">重置密码</button>
           ${u.id!=='admin'?toggleBtn:''}
         </td>
@@ -4588,9 +4858,15 @@ const UserModule = {
   },
 
   showCreate(){
+    const td=today();
     Modal.open('新增员工账号',`
       <div class="form-item"><label class="form-label required">用户名(登录用,唯一)</label><input class="form-input" id="nuUser" placeholder="如 wang_xue"></div>
       <div class="form-item" style="margin-top:10px"><label class="form-label required">姓名</label><input class="form-input" id="nuName" placeholder="如 王雪"></div>
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <div class="form-item"><label class="form-label">📞 联系电话</label><input class="form-input" id="nuPhone" placeholder="11 位手机号"></div>
+        <div class="form-item"><label class="form-label">📅 入职日期</label><input type="date" class="form-input" id="nuJoinDate" value="${td}"></div>
+      </div>
+      <div class="form-item" style="margin-top:10px"><label class="form-label">🆔 身份证号(选填,加密存储)</label><input class="form-input" id="nuIdCard" placeholder="选填,仅店长可见"></div>
       <div class="form-item" style="margin-top:10px"><label class="form-label required">角色权限</label>
         <select class="form-select" id="nuRole">
           <option value="employee">员工(化妆师/实习生)</option>
@@ -4602,11 +4878,14 @@ const UserModule = {
           <option value="junior">初级化妆师(底薪+岗位500+基准1.5万)</option>
           <option value="middle" selected>中级化妆师(底薪+岗位800+基准2.5万)</option>
           <option value="senior">高级化妆师(底薪+岗位1200+基准3.5万)</option>
-          <option value="customer">线上客服(底薪1500+摄影¥20/组+妆造¥15/组)</option>
+          <option value="customer">线上客服(纯提成,妆造¥15/组,摄影¥20/组,100单+¥300,200单+¥700)</option>
         </select></div>
       <div class="form-item" style="margin-top:10px"><label class="form-label">初始密码</label>
         <input class="form-input" id="nuPass" value="123456">
         <div style="font-size:12px;color:var(--c-muted);margin-top:4px">员工首次登录建议提醒其在【我的】中修改密码</div>
+      </div>
+      <div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7">
+        💡 入职日期决定<strong>「云锦同行奖」</strong>:满 1 年起每年加 ¥100/月,满 2 年 ¥200,以此类推
       </div>`,
     async()=>{
       const username=$('#nuUser').value.trim();
@@ -4617,6 +4896,9 @@ const UserModule = {
       if(all.find(u=>u.username===username)){Toast.error('用户名已存在');return false}
       await DataStore.put('users',{
         id:uuid(),username,name,
+        phone: ($('#nuPhone').value||'').trim(),
+        idCard: ($('#nuIdCard').value||'').trim(),
+        joinDate: $('#nuJoinDate').value || td,
         role:$('#nuRole').value,level:$('#nuLevel').value,
         password:$('#nuPass').value||'123456',active:true,createdAt:Date.now()
       });
@@ -4661,6 +4943,59 @@ const UserModule = {
       }catch(e){
         Toast.error('重置失败:'+e.message);
         console.error('[ResetPwd]',e);
+        return false;
+      }
+    });
+  },
+
+  // 🆕 v10:店长编辑员工档案(姓名/电话/身份证/入职日期)
+  async editUser(id){
+    if(Auth.current.role!=='admin'){Toast.error('仅店长可编辑员工档案');return}
+    const u=await DataStore.get('users',id);
+    if(!u){Toast.error('找不到此用户');return}
+    
+    Modal.open(`✏️ 编辑员工档案 · ${escapeHtml(u.name)}`,`
+      <div class="form-item"><label class="form-label required">姓名</label>
+        <input class="form-input" id="euName" value="${escapeHtml(u.name||'')}"></div>
+      <div class="form-item" style="margin-top:10px"><label class="form-label">用户名(登录)</label>
+        <input class="form-input" id="euUsername" value="${escapeHtml(u.username||'')}" disabled style="background:#F3F4F6;color:var(--c-muted)"></div>
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <div class="form-item"><label class="form-label">📞 联系电话</label>
+          <input class="form-input" id="euPhone" value="${escapeHtml(u.phone||'')}" placeholder="11 位手机号"></div>
+        <div class="form-item"><label class="form-label">📅 入职日期</label>
+          <input type="date" class="form-input" id="euJoinDate" value="${escapeHtml(u.joinDate||'')}"></div>
+      </div>
+      <div class="form-item" style="margin-top:10px"><label class="form-label">🆔 身份证号</label>
+        <input class="form-input" id="euIdCard" value="${escapeHtml(u.idCard||'')}" placeholder="选填,仅店长可见"></div>
+      <div class="form-item" style="margin-top:10px"><label class="form-label required">岗位等级</label>
+        <select class="form-select" id="euLevel">
+          ${Object.entries(LEVELS).map(([k,v])=>`<option value="${k}" ${u.level===k?'selected':''}>${escapeHtml(v.name)}</option>`).join('')}
+        </select></div>
+      <div class="form-item" style="margin-top:10px"><label class="form-label required">角色</label>
+        <select class="form-select" id="euRole">
+          <option value="employee" ${u.role==='employee'?'selected':''}>员工</option>
+          <option value="admin" ${u.role==='admin'?'selected':''}>店长</option>
+        </select></div>
+      ${u.joinDate?`<div style="margin-top:14px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7">
+        💡 当前云锦同行奖:${(()=>{const m=Calc.monthsSinceJoin(u.joinDate);const y=Math.floor(m/12);return y<1?'未满 1 年(无)':`满 ${y} 年 → +¥${y*100}/月`;})()}
+      </div>`:''}
+    `,async()=>{
+      try{
+        const name=$('#euName').value.trim();
+        if(!name){Toast.error('姓名必填');return false}
+        u.name=name;
+        u.phone=($('#euPhone').value||'').trim();
+        u.idCard=($('#euIdCard').value||'').trim();
+        u.joinDate=$('#euJoinDate').value||u.joinDate;
+        u.level=$('#euLevel').value;
+        u.role=$('#euRole').value;
+        u.updatedAt=Date.now();
+        await DataStore.put('users',u);
+        Logger.log('edit_user',`编辑员工 ${u.name} 档案`);
+        Toast.success('✅ 已更新档案');
+        this.refresh();
+      }catch(e){
+        Toast.error('保存失败:'+e.message);
         return false;
       }
     });
@@ -5699,6 +6034,43 @@ const CustomerServiceModule = {
       </div>
 
       ${aiTip}
+
+      ${(()=>{
+        // 🆕 v10:客服阶梯进度提醒(每月 15 日及之后,或本月已成交时显示)
+        if(isAdmin || !isCustomerRole)return '';
+        const today_=new Date();
+        const day=today_.getDate();
+        const curMonth_=currentMonth();
+        const myDeals=myAll.filter(r=>r.status==='deal' && isSameMonth(r.bookingDate||r.dealAt, curMonth_)).length;
+        if(myDeals===0 && day<15)return '';  // 月初无业绩时不打扰
+        let tier='', nextTier='', progress=0, color='#10b981', icon='💪';
+        if(myDeals>=200){tier='🏆 已达成 200 单 → 奖 ¥700';color='#dc2626';icon='🏆';progress=100}
+        else if(myDeals>=100){
+          const remain=200-myDeals;
+          tier=`🎉 已达成 100 单 → 奖 ¥300`;
+          nextTier=`距 200 单 ¥700 还差 <strong>${remain} 单</strong>`;
+          color='#f59e0b';icon='🎉';progress=Math.round(myDeals/200*100);
+        }else{
+          const remain=100-myDeals;
+          nextTier=`距 100 单 ¥300 还差 <strong>${remain} 单</strong>`;
+          color='#3b82f6';icon='💪';progress=Math.round(myDeals/100*100);
+        }
+        const dayHint=day>=15?`📅 本月已过半(${day} 日),`:'';
+        return `<div class="card" style="margin-top:14px;background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid ${color}">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="font-size:32px">${icon}</div>
+            <div style="flex:1;min-width:200px">
+              <div style="font-weight:700;color:${color};font-size:14px">${tier||'阶梯奖励进度'}</div>
+              <div style="font-size:12px;color:var(--c-ink-2);margin-top:4px;line-height:1.7">
+                ${dayHint}本月已成交 <strong style="color:${color}">${myDeals}</strong> 单。${nextTier}
+              </div>
+              <div style="height:8px;background:#E5E7EB;border-radius:4px;margin-top:8px;overflow:hidden">
+                <div style="width:${progress}%;height:100%;background:linear-gradient(90deg,${color},#FFD700);transition:width .3s"></div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      })()}
 
       <!-- 🆕 v7:分配给我的待跟进(任务大厅) -->
       ${assignedToMe.length>0?`<div class="card" style="margin-top:14px;background:linear-gradient(135deg,#FEE2E2,#FFFBFB);border:2px solid #dc2626;cursor:pointer" data-action="cs-view" data-key="assigned">
@@ -7796,13 +8168,27 @@ const PetModule = {
     
     const totalFeed = (pet.feeds.normal||0)+(pet.feeds.premium||0)+(pet.feeds.limited||0);
     
+    // 🆕 v10:抽一句情境气泡
+    const bubble = PetSystem.pickBubble(pet, '');
+    
+    // 🆕 v10:串门卡片(随机展示其他员工的活跃宠物)
+    const myUid=Auth.current.id;
+    const allPets=await DataStore.all('pets');
+    const allUsers=await DataStore.all('users');
+    const userMap=Object.fromEntries(allUsers.map(u=>[u.id,u]));
+    const otherActivePets=allPets
+      .filter(p=>p.id!==myUid && p.type && userMap[p.id] && userMap[p.id].active)
+      .sort(()=>Math.random()-0.5)
+      .slice(0,4);
+    
     let html = `
-      <div class="card" style="text-align:center;background:linear-gradient(180deg,#FFF8DC 0%,#fff 100%)">
-        <div style="font-size:96px;line-height:1.2;${isHungry?'opacity:0.5;filter:grayscale(0.5)':''}">${t.emoji}</div>
-        <div style="font-size:20px;font-weight:700;color:var(--c-primary);margin-top:6px">${t.name}</div>
+      <div class="pet-stage v10-paper-card v10-kintsugi" style="text-align:center">
+        <div class="pet-bubble">${escapeHtml(bubble)}</div>
+        <div class="pet-emoji-big ${isHungry?'hungry':''}">${t.emoji}</div>
+        <div style="font-size:20px;font-weight:700;color:var(--c-primary);margin-top:6px;letter-spacing:2px">${t.name}</div>
         <div style="font-size:13px;color:var(--c-muted)">${t.desc}</div>
         <div style="margin-top:10px">${stateBadge}</div>
-        <div style="margin-top:14px;display:inline-block;padding:6px 14px;background:linear-gradient(135deg,#FFD700,#FFA500);color:#fff;border-radius:20px;font-weight:700">
+        <div style="margin-top:14px;display:inline-block;padding:6px 14px;background:linear-gradient(135deg,#FFD700,#FFA500);color:#fff;border-radius:20px;font-weight:700;letter-spacing:1px">
           Lv.${pet.level} · ${lvInfo.title}
         </div>
       </div>
@@ -7873,6 +8259,24 @@ const PetModule = {
           </tbody>
         </table>
       </div>
+      
+      ${otherActivePets.length>0?`<div class="card v10-paper-card" style="margin-top:12px">
+        <div class="card-title">🐾 同事的小宠物来串门</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px">
+          ${otherActivePets.map(p=>{
+            const ot = PET_TYPES[p.type] || {emoji:'🐾',name:'未知'};
+            const ouser = userMap[p.id];
+            const olv = PET_LEVELS.find(l=>l.lv===p.level)||{title:'初识'};
+            const oHungry = (p.satiety||0) < PET_SATIETY_LOW;
+            return `<div style="text-align:center;padding:10px;background:rgba(255,248,220,0.5);border-radius:8px;border:1px dashed rgba(196,168,107,0.3)">
+              <div style="font-size:42px;line-height:1;${oHungry?'filter:grayscale(0.5);opacity:0.7':''}">${ot.emoji}</div>
+              <div style="font-size:12px;font-weight:600;margin-top:6px;color:var(--c-primary)">${escapeHtml(ot.name)}</div>
+              <div style="font-size:11px;color:var(--c-muted)">${escapeHtml(ouser.name)} · Lv.${p.level}</div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--c-muted);text-align:center">同事们的萌宠也在努力成长哦~</div>
+      </div>`:''}
     `;
     
     $('#petTabBody').innerHTML = html;
@@ -9213,6 +9617,7 @@ document.addEventListener('click',async e=>{
     'cancel-leave':()=>LeaveModule.cancel(id),
     'rm-sum-img':()=>SummaryModule.rmImg(i),
     'reset-pwd':()=>UserModule.resetPwd(id),
+    'edit-user':()=>UserModule.editUser(id),
     'toggle-user':()=>UserModule.toggle(id),
     // 我的
     'logout':()=>{
@@ -9474,6 +9879,17 @@ async function updateDiag(){
 /* ============ 启动 ============ */
 (async function boot(){
   console.log('[Boot] 开始启动 YJ-EMS v4.1...');
+  
+  // 🆕 v10:注入主题 CSS(纸纹 + 金缮线条 + 宠物舞台动效)
+  try{
+    if(typeof V10_THEME_CSS !== 'undefined'){
+      const styleEl = document.createElement('style');
+      styleEl.id = 'v10-theme';
+      styleEl.textContent = V10_THEME_CSS;
+      document.head.appendChild(styleEl);
+      console.log('[Boot] ✅ v10 主题样式已注入');
+    }
+  }catch(e){console.warn('[Boot] v10 主题注入失败',e)}
   
   // 调试模式:URL 加 ?debug=1 或 #debug 启用
   if(location.search.includes('debug')||location.hash.includes('debug')){
