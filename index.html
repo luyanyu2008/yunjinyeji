@@ -590,6 +590,7 @@ tr:hover td{background:rgba(201,169,97,.05)}
 
     <!-- 首页 -->
     <div class="page active" id="page-home">
+      <div id="syncStatusBar"></div>
       <div class="overview-grid" id="overviewGrid"></div>
       <div class="card">
         <div class="card-title">功能中心</div>
@@ -679,10 +680,21 @@ tr:hover td{background:rgba(201,169,97,.05)}
         <div style="font-size:12px;color:var(--c-muted);margin-bottom:8px">每个客户可多平台勾选,支持上传截图+文字备注。1平台¥3 / 2平台¥5 / 3平台集齐¥8</div>
         <div class="review-list" id="reviewList"></div>
       </div>
+      
+      <!-- 🆕 v10.3 直播奖励 -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <div class="card-title" style="margin:0">📺 直播奖励(每场记录)</div>
+          <button class="btn btn-sm btn-primary" onclick="PerfModule.addLivestream()">+ 新增直播</button>
+        </div>
+        <div style="font-size:12px;color:var(--c-muted);margin-bottom:8px">每场直播 ≥2 小时基础奖 ¥15;超 2 小时每多 1 小时 +¥10。需上传直播数据截图。</div>
+        <div id="livestreamList"></div>
+      </div>
       <div class="summary-bar">
         <div class="summary-item"><div class="summary-label">总业绩</div><div class="summary-value" id="sumTotal">¥0</div></div>
         <div class="summary-item"><div class="summary-label">接待数</div><div class="summary-value" id="sumCount">0</div></div>
         <div class="summary-item"><div class="summary-label">好评奖</div><div class="summary-value" id="sumReview">¥0</div></div>
+        <div class="summary-item"><div class="summary-label">📺 直播奖</div><div class="summary-value" id="sumLivestream">¥0</div></div>
         <div class="summary-item"><div class="summary-label">加班费</div><div class="summary-value" id="sumOt">¥0</div></div>
         <div class="summary-item"><div class="summary-label">扣款</div><div class="summary-value" id="sumDeduct">¥0</div></div>
         <button class="btn btn-primary" onclick="PerfModule.submit()">提交录入</button>
@@ -974,6 +986,16 @@ tr:hover td{background:rgba(201,169,97,.05)}
       <div id="complaintsContent"></div>
     </div>
 
+    <!-- 🆕 v10.6 复盘学习库(全员可见) -->
+    <div class="page" id="page-reflection">
+      <div class="page-header">
+        <button class="page-back" onclick="Router.go('home')">←</button>
+        <div class="page-title-bar"></div>
+        <div class="page-title">🎓 复盘学习库</div>
+      </div>
+      <div id="reflectionContent"></div>
+    </div>
+
     <!-- 🆕 v7 门店 SOP 核验 -->
     <div class="page" id="page-sop">
       <div class="page-header">
@@ -1126,7 +1148,8 @@ const DataStore = {
   async put(store,data){
     // 自动加 _ver 字段(用于版本兼容)+ 时间戳(用于冲突解决)
     data._ver=data._ver||3;
-    data._updatedAt=Date.now();
+    // 🆕 v10.5:用校准时间戳(消除客户端时钟漂移影响)
+    data._updatedAt=(typeof CloudSync!=='undefined'&&CloudSync.serverNow)?CloudSync.serverNow():Date.now();
     if(this.mode==='ls'){
       const arr=this._lsGetAll(store);
       const i=arr.findIndex(x=>x.id===data.id);
@@ -1418,11 +1441,29 @@ const PACKAGES = {
 // 🆕 v6 客诉分类
 const COMPLAINT_CATEGORIES = {
   service:     {name:'服务态度', desc:'语气生硬/响应慢/不耐烦'},
-  skill:       {name:'专业技能', desc:'化妆不满意/拍摄构图差/修图不自然'},
+  makeup_skill: {name:'妆造技术', desc:'妆容不满意/盘发松散/造型不符合预期'},
+  photo_skill: {name:'摄影技术', desc:'拍摄构图差/角度问题/抓拍失败'},
+  retouching: {name:'修图质量', desc:'修图不自然/过度磨皮/瑕疵未去除'},
+  delivery:    {name:'交付问题', desc:'回片延期/丢失底片/格式错误'},
   environment: {name:'硬件环境', desc:'服装破损/店内气味/环境拥挤'},
+  hygiene:     {name:'卫生问题', desc:'化妆工具不洁/服装异味/餐具脏污'},
   price:       {name:'价格/隐形消费', desc:'对补差价有异议/计费不透明'},
+  reservation: {name:'预约/排单', desc:'客服回复慢/排单冲突/到店等待长'},
   other:       {name:'其他', desc:''}
 };
+
+// 🆕 v10.3 客诉发生渠道(妆发/摄影/客服/前台等)
+const COMPLAINT_CHANNELS = {
+  makeup:    {name:'💄 妆发渠道', desc:'妆造过程中产生的不满'},
+  photo:     {name:'📷 摄影渠道', desc:'摄影/修图环节产生的不满'},
+  customer_service: {name:'📞 客服渠道', desc:'预约/沟通环节产生的不满'},
+  reception: {name:'🎫 前台/接待', desc:'接待引导环节产生的不满'},
+  retouch:   {name:'🎨 后期修图', desc:'修图师环节产生的不满'},
+  other_channel: {name:'其他', desc:''}
+};
+
+// 🆕 v10.5 客诉扣款标准:每条有效客诉 ¥200(从 v10.4 的 ¥50 上调)
+const COMPLAINT_FINE = 200;
 
 const COMPLAINT_LEVELS = {
   low:  {name:'🟢 低', color:'#10b981', desc:'轻微不满,口头说明即可'},
@@ -1446,47 +1487,132 @@ const SOP_FINE_PER_SHIFT = 10;  // 班次未达标扣款(元/班次)
 
 // 🆕 v9 电子宠物养成系统
 // ① 妆发档位饲料表(按 unitPrice 查表,自动发普通饲料)
+// 🆕 v10.7 重新设计饲料数值(更平衡,升级有难度)
+// 设计思路:中级化妆师月业绩 ¥30000 ≈ 100 单 ¥299 = 4000 饲料 ≈ 4000 成长
+// 这样 LV10(累计 30000 成长)需要约 7-9 个月持续优秀表现
 const PET_FEED_BY_PRICE = {
-  129: 20, 188: 25, 199: 30, 299: 40, 399: 55, 499: 70
+  129: 8, 188: 12, 199: 14, 299: 22, 399: 32, 499: 45
 };
-// 摄影加推奖励
-const PET_PHOTO_BONUS_FEED = 60;
-// 日常 SOP 任务奖励
+// 摄影加推奖励(降低)
+const PET_PHOTO_BONUS_FEED = 30;
+// 日常 SOP 任务奖励(降低)
 const PET_DAILY_REWARDS = {
-  signin_ontime:    {feed:10, name:'准时上下班打卡'},
-  sop_pass:         {feed:15, name:'卫生 SOP 达标'},
-  zero_complaint:   {feed:20, name:'当日零客诉'},
-  review_with_img:  {feed:15, name:'客户带图好评(每条)'},
-  share_promo:      {feed:10, name:'转发门店宣传'},
-  team_collab:      {feed:10, name:'岗位配合无推诿'}
+  signin_ontime:    {feed:3,  name:'准时上下班打卡'},
+  sop_pass:         {feed:5,  name:'卫生 SOP 达标'},
+  zero_complaint:   {feed:8,  name:'当日零客诉'},
+  review_with_img:  {feed:8,  name:'客户带图好评(每条)'},
+  share_promo:      {feed:3,  name:'转发门店宣传'},
+  team_collab:      {feed:3,  name:'岗位配合无推诿'}
 };
 // 奖惩规则
 const PET_PENALTIES = {
-  late_early:       {feed:-10, name:'迟到早退'},
-  complaint:        {feed:-30, mood:0, name:'有效客诉(心情清零)'},
-  service_violate:  {feed:-20, name:'服务/仪容违规'},
-  full_attendance:  {premium:30, name:'月度全勤(奖高级饲料)'}
+  late_early:       {feed:-15, name:'迟到早退(扣15饲料)'},
+  complaint:        {feed:-50, mood:0,  name:'有效客诉(扣50饲料+心情清零)'},
+  service_violate:  {feed:-30, name:'服务/仪容违规(扣30饲料)'},
+  full_attendance:  {premium:20, name:'月度全勤(奖20颗高级饲料)'}
 };
 // 5 种古风宠物
+// 🆕 v10.6 古风萌宠 - 接入 GitHub 图片(raw 地址)
+// 仓库:luyanyu2008/yunjinyeji/pet-images/
+// 命名规则:{type}-{state}.png
+//   state: base(基础) / eat(吃食/开心) / sleep(萎靡/休息)
+// 加载失败时自动回退到 emoji
+// 🆕 v10.8 古风萌宠图 — 直接接入 picui 图床(用户上传 2026-05-11)
+// 5 种宠物 × 3 状态 = 15 张图,顺序对应 PET_TYPES 定义
+// 如未来更换图床:直接修改下方 URL 即可,或在【云端同步 → 改图床URL】配置
+// 加载失败时自动回退到 emoji,不影响系统运行
+const PET_IMG_BASE_DEFAULT = 'https://free.picui.cn/free/2026/05/11';
+const PET_IMG_BASE = (typeof localStorage!=='undefined' && localStorage.getItem('yj_pet_img_base')) || PET_IMG_BASE_DEFAULT;
+
+// 🎨 5 种古风萌宠 — 完整 URL 直接绑定(2026-05-11 用户上传)
 const PET_TYPES = {
-  fox:    {name:'灵狐', emoji:'🦊', desc:'机灵狡黠,九尾流光'},
-  rabbit: {name:'玉兔', emoji:'🐰', desc:'冰雪聪明,广寒仙气'},
-  deer:   {name:'星辰鹿', emoji:'🦌', desc:'温润如玉,星河角生'},
-  cat:    {name:'空灵猫', emoji:'🐱', desc:'灵性十足,踏雪寻梅'},
-  crane:  {name:'云鹤', emoji:'🦢', desc:'仙气飘渺,云端起舞'}
+  fox:    {name:'灵狐', emoji:'🦊', desc:'机灵狡黠,九尾流光',
+           img:{
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbb1d119.png',
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbb1d166.png',
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbb277fb.png'
+           }},
+  rabbit: {name:'玉兔', emoji:'🐰', desc:'冰雪聪明,广寒仙气',
+           img:{
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbb1c37b.png',
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbb1c57c.png',
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbd0e0e9.png'
+           }},
+  deer:   {name:'星辰鹿', emoji:'🦌', desc:'温润如玉,星河角生',
+           img:{
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbd27b27.png',
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbd33102.png',
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbd3479e.png'
+           }},
+  cat:    {name:'空灵猫', emoji:'🐱', desc:'灵性十足,踏雪寻梅',
+           img:{
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbd31c84.png',
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbee6870.png',
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbf04514.png'
+           }},
+  crane:  {name:'云鹤', emoji:'🦢', desc:'仙气飘渺,云端起舞',
+           img:{
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbf1611c.png',
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbf1ee82.png',
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbf1b816.png'
+           }}
 };
+
+// 🆕 v10.7 渲染宠物形象(智能探测多种命名规则,任何一个成功就用)
+// 状态对应:base=普通 / eat=吃东西(开心) / sleep=萎靡/休息(饿了)
+// 智能探测候选(按优先级):
+//   1. fox-base.png  (我的默认推荐命名)
+//   2. fox_base.png  (下划线)
+//   3. fox.png       (单文件)
+//   4. 灵狐.png      (中文)
+//   5. emoji 兜底
+function renderPetVisual(type, state, size){
+  const t = PET_TYPES[type];
+  if(!t)return '🐾';
+  const sz = size || 96;
+  const stateKey = state || 'base';
+  
+  // 优先用指定状态的图,没有则回退 base
+  const url = (t.img && t.img[stateKey]) || (t.img && t.img.base);
+  if(!url){
+    return `<span style="font-size:${Math.round(sz*0.85)}px;line-height:1">${t.emoji}</span>`;
+  }
+  
+  // 图片加载失败时,onerror 回退到 emoji
+  return `<span class="pet-visual" style="display:inline-block;width:${sz}px;height:${sz}px;text-align:center;vertical-align:middle;line-height:1">
+    <img src="${url}" 
+         alt="${t.name}" 
+         data-fallback="${t.emoji}"
+         data-size="${sz}"
+         style="width:100%;height:100%;object-fit:contain;vertical-align:middle"
+         onerror="if(!this.dataset.fbDone){this.dataset.fbDone='1';this.outerHTML='<span style=&quot;font-size:'+Math.round(this.dataset.size*0.85)+'px;line-height:1&quot;>'+this.dataset.fallback+'</span>'}"
+         loading="lazy">
+  </span>`;
+}
 // 等级表(累计成长值 → 解锁权益)
+// 🆕 v10.7 重新设计等级体系(挑战感 + 皮肤进化)
+// 每张 PNG 图就是一个皮肤,等级越高用越好看的图
+// 假设员工月平均 3000 成长值(中等业绩),则:
+//   LV2 第 1 周即可达成(初识 → 萌动)
+//   LV3 大约 第 2 周
+//   LV4 大约 第 1 个月  
+//   LV5 大约 第 2 个月
+//   LV6 大约 第 3-4 个月
+//   LV7 大约 第 6 个月(半年里程碑)
+//   LV8 大约 第 9 个月
+//   LV9 大约 第 12 个月(一周年)
+//   LV10 大约 第 18 个月(神兽)
 const PET_LEVELS = [
-  {lv:1,  growth:0,    title:'初识',         reward:'基础宠物形象、默认头像'},
-  {lv:2,  growth:120,  title:'萌动',         reward:'专属基础头像框'},
-  {lv:3,  growth:300,  title:'灵动',         reward:'宠物简易动态特效'},
-  {lv:4,  growth:550,  title:'秀美',         reward:'普通古风皮肤 1 套'},
-  {lv:5,  growth:900,  title:'风雅',         reward:'专属荣誉称号 + 成长 +5%'},
-  {lv:6,  growth:1400, title:'卓越',         reward:'第二套古风皮肤 + 榜单标识'},
-  {lv:7,  growth:2000, title:'灵韵',         reward:'心情值上限提升至 120'},
-  {lv:8,  growth:2800, title:'仙姿',         reward:'稀有动态特效 + 成长 +10%'},
-  {lv:9,  growth:3800, title:'神韵',         reward:'限定绝版皮肤资格'},
-  {lv:10, growth:5000, title:'神兽',         reward:'金色标识 + 评优优先 + 月领高级饲料'}
+  {lv:1,  growth:0,     title:'初识',  skin:'base',     reward:'基础宠物形象'},
+  {lv:2,  growth:300,   title:'萌动',  skin:'base',     reward:'专属基础头像框'},
+  {lv:3,  growth:800,   title:'灵动',  skin:'base',     reward:'宠物简易动态特效'},
+  {lv:4,  growth:1800,  title:'秀美',  skin:'eat',      reward:'🎁 解锁【吃食皮肤】(开心样子)'},
+  {lv:5,  growth:3500,  title:'风雅',  skin:'eat',      reward:'专属荣誉称号 + 饲料 +5%'},
+  {lv:6,  growth:6000,  title:'卓越',  skin:'eat',      reward:'榜单金边标识'},
+  {lv:7,  growth:9500,  title:'灵韵',  skin:'sleep',    reward:'🎁 解锁【慵懒皮肤】+ 心情上限 +20'},
+  {lv:8,  growth:14000, title:'仙姿',  skin:'sleep',    reward:'稀有动态特效 + 饲料 +10%'},
+  {lv:9,  growth:20000, title:'神韵',  skin:'sleep',    reward:'限定绝版皮肤资格'},
+  {lv:10, growth:30000, title:'神兽',  skin:'sleep',    reward:'金色标识 + 评优优先 + 月领限定饲料'}
 ];
 // 饲料属性
 const PET_FEED_TYPES = {
@@ -2108,7 +2234,7 @@ const Calc = {
   },
 
   // 化妆师月度薪酬(初/中/高 通用)
-  _calcMuaSalary(user,level,perf,att,leaves){
+  _calcMuaSalary(user,level,perf,att,leaves,month){
     // 强制 Number 转换,防止字符串拼接导致计算异常
     const num=v=>{const n=Number(v);return isNaN(n)?0:n};
     
@@ -2157,18 +2283,25 @@ const Calc = {
       const bonusResult=this.calcBonus(overAmount);
       const bonus=bonusResult.total;
 
-      // 🆕 v10:云锦同行奖(满 1 年 +¥100/月,满 2 年 +¥200,以此类推)
-      const tenureBonus = this.calcTenureBonus(user.joinDate);
+      // 🆕 v10.3:取消按月分摊同行奖(改为年终奖)
+      const tenureBonus = 0;
       const tenureYears = Math.floor(this.monthsSinceJoin(user.joinDate)/12);
+      
+      // 🆕 v10.3:年终奖(只在 12 月发放)
+      const yearEnd = this.calcYearEndBonus(user.joinDate, month);
+      const yearEndBonus = yearEnd.amount;
+      
+      // 🆕 v10.3:直播奖励(从 perf 中累计本月直播)
+      const livestreamReward = this._calcLivestreamReward(perf);
 
       // 合计
-      const gross = BASE_SALARY + attBonus + jobPay + bonus + overtimePay + reviewReward + tenureBonus;
+      const gross = BASE_SALARY + attBonus + jobPay + bonus + overtimePay + reviewReward + tenureBonus + yearEndBonus + livestreamReward;
       const deduct = lateEarlyFine + leaveFine;
       const net = Math.max(0, gross - deduct);
 
       // 始终输出调试日志(可在浏览器 F12 查看)
       console.log(`[Calc] ${user.name}(${level.name}) 业绩¥${totalPerf} 应发¥${gross} 实发¥${net}`,
-        {底薪:BASE_SALARY,全勤:attBonus,岗位工资:jobPay,提成:bonus,加班费:overtimePay,好评奖:reviewReward,云锦同行奖:tenureBonus,迟早扣:lateEarlyFine,请假扣:leaveFine,完成率:Math.round(ratio*1000)/10+'%'});
+        {底薪:BASE_SALARY,全勤:attBonus,岗位工资:jobPay,提成:bonus,加班费:overtimePay,好评奖:reviewReward,直播奖:livestreamReward,年终奖:yearEndBonus,迟早扣:lateEarlyFine,请假扣:leaveFine,完成率:Math.round(ratio*1000)/10+'%'});
 
       return {
         user,level, kind:'mua',
@@ -2179,6 +2312,8 @@ const Calc = {
         overtimeHours, overtimePay,
         reviewCount, reviewReward,
         tenureBonus, tenureYears,
+        yearEndBonus, yearEndLevel:yearEnd.level, yearEndIsPayMonth:yearEnd.isPayMonth,
+        livestreamReward,
         lateMinutes:lateMin, earlyMinutes:earlyMin, lateEarlyFine,
         leaveDays:paidLeaveDays, leaveFine,
         gross, deduct, net:Math.round(net*100)/100
@@ -2213,16 +2348,74 @@ const Calc = {
     return (now.getFullYear()-j.getFullYear())*12 + (now.getMonth()-j.getMonth());
   },
 
-  // 🆕 v10:云锦同行奖(满 1 年 ¥100/月,满 2 年 ¥200,以此类推)
+  // ⚠️ v10.3 弃用:不再按月分摊云锦同行奖,改为年终奖
+  // 保留这个函数仅为兼容老数据(返回 0,不影响月薪)
   calcTenureBonus(joinDate){
-    const months = this.monthsSinceJoin(joinDate);
-    const years = Math.floor(months/12);  // 满 1 年(12 个月)起
-    if(years < 1)return 0;
-    return years * 100;  // 满 1 年 +100,满 2 年 +200,满 3 年 +300...
+    return 0;
+  },
+
+  // 🆕 v10.3:直播奖励计算
+  // 规则:每场直播 ≥2 小时基础 ¥15;超 2 小时每多 1 小时 +¥10
+  // 例:2h=15 / 3h=25 / 4h=35 / 5h=45
+  // perf 记录里的 livestreams 字段是数组,每条 {hours, screenshotUrl, date}
+  _calcLivestreamReward(perfRecords){
+    let total = 0;
+    (perfRecords||[]).forEach(r=>{
+      (r.livestreams||[]).forEach(ls=>{
+        const h = parseFloat(ls.hours)||0;
+        if(h < 2)return;  // 不足 2 小时不发奖
+        let reward = 15;  // 基础 2 小时 ¥15
+        if(h > 2){
+          reward += Math.floor(h - 2) * 10;  // 超 1 小时再 +¥10(取整,避免小数)
+          // 如果是 2.5 小时,取下整,只算 2 小时基础奖 ¥15
+          // 如果是 3.0 小时,3-2=1,+¥10,合计 ¥25
+        }
+        total += reward;
+      });
+    });
+    return total;
+  },
+
+  // 🆕 v10.3:年终奖计算(老员工年终奖,只在 12 月发放)
+  // 规则:满 1 年(进入第 2 年)→ 第 2 年年底发 ¥1200(= 12 × 100)
+  //      满 2 年 → 第 3 年年底发 ¥2400
+  //      满 N 年 → 第 N+1 年年底发 ¥(N × 1200)
+  // 当前结算月份是 month(YYYY-MM)
+  calcYearEndBonus(joinDate, month){
+    if(!joinDate)return {amount:0, level:0, isPayMonth:false, anniversary:0};
+    const j = new Date(joinDate);
+    if(isNaN(j))return {amount:0, level:0, isPayMonth:false, anniversary:0};
+    
+    // 当前结算月
+    const [curY, curM] = (month||currentMonth()).split('-').map(Number);
+    
+    // 只在 12 月才发
+    const isDecember = (curM === 12);
+    
+    // 计算到当前 12 月底为止,员工已工作的完整年数
+    // 例:joinDate=2024-03-15, 当前月=2026-12,已工作 2 年 9 个月 → 满 2 年
+    // 在 2025 年 12 月时:已工作 1 年 9 个月 → 满 1 年 → 发 ¥1200
+    // 在 2026 年 12 月时:已工作 2 年 9 个月 → 满 2 年 → 发 ¥2400
+    const monthsToYearEnd = (curY - j.getFullYear()) * 12 + (12 - 1 - j.getMonth());
+    // 注意:12 月的"年底"取 12-1 (因为 getMonth 是 0-11),发奖时点是该年 12 月
+    const yearsCompleted = Math.floor(monthsToYearEnd / 12);
+    
+    if(yearsCompleted < 1){
+      return {amount:0, level:0, isPayMonth:isDecember, anniversary:0};
+    }
+    
+    // 年终奖金额 = N × 1200(N = 已满年数)
+    const amount = isDecember ? yearsCompleted * 1200 : 0;
+    return {
+      amount,
+      level: yearsCompleted,
+      isPayMonth: isDecember,
+      anniversary: yearsCompleted
+    };
   },
 
   // 实习生月度薪酬(50元/日补助 + 加班费 + 好评奖,无底薪/全勤/岗位工资/提成/扣款)
-  _calcInternSalary(user,level,perf,att,leaves){
+  _calcInternSalary(user,level,perf,att,leaves,month){
     const num=v=>{const n=Number(v);return isNaN(n)?0:n};
     
     // 出勤天数(去重日期,有签到记录就算出勤;但当日请假不计)
@@ -2259,11 +2452,16 @@ const Calc = {
     const reviewCount=perf.reduce((s,r)=>s+(r.reviews||[]).length,0);
     const reviewReward=perf.reduce((s,r)=>s+num(this.calcReviewsReward(r.reviews)),0);
 
-    // 🆕 v10:云锦同行奖
-    const tenureBonus = this.calcTenureBonus(user.joinDate);
+    // 🆕 v10.3:取消按月分摊同行奖
+    const tenureBonus = 0;
     const tenureYears = Math.floor(this.monthsSinceJoin(user.joinDate)/12);
+    
+    // 🆕 v10.3:年终奖 + 直播奖
+    const yearEnd = this.calcYearEndBonus(user.joinDate, month);
+    const yearEndBonus = yearEnd.amount;
+    const livestreamReward = this._calcLivestreamReward(perf);
 
-    const gross = allowance + overtimePay + reviewReward + tenureBonus;
+    const gross = allowance + overtimePay + reviewReward + tenureBonus + yearEndBonus + livestreamReward;
     const net = gross;
 
     return {
@@ -2276,6 +2474,8 @@ const Calc = {
       overtimeHours, overtimePay,
       reviewCount, reviewReward,
       tenureBonus, tenureYears,
+      yearEndBonus, yearEndLevel:yearEnd.level, yearEndIsPayMonth:yearEnd.isPayMonth,
+      livestreamReward,
       lateMinutes:0, earlyMinutes:0, lateEarlyFine:0,
       leaveDays:0, leaveFine:0,
       gross, deduct:0, net:Math.round(net*100)/100
@@ -2353,14 +2553,39 @@ const Calc = {
     // 简化处理:本回合先只考核 已记录的逾期。未填班次不扣(避免误伤)
     const sopFine=sopLateShifts*SOP_FINE_PER_SHIFT;
 
+    // 🆕 v10.3:客诉扣款 — 该员工当月被指认为责任人的客诉数 × ¥50
+    // user._csReports 由调用方注入,但需要全店所有 csReports
+    // 从全部 cs_reports 中,找当月内、责任人含此用户、且状态非 cancel 的客诉
+    const allCsForFine = csReportRecords || [];
+    let complaintCount = 0;
+    const complaintDetail = [];
+    allCsForFine.forEach(r=>{
+      if(!r.complaints || r.complaints.length===0)return;
+      r.complaints.forEach(c=>{
+        if(!c.responsibleIds || !c.responsibleIds.includes(user.id))return;
+        // 客诉创建月份判断(用 createdAt 或 updatedAt)
+        const ts = c.createdAt || c.updatedAt || 0;
+        if(!ts)return;
+        const d = new Date(ts);
+        const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        if(m !== month)return;
+        complaintCount++;
+        complaintDetail.push({customer:r.customerName, level:c.level, channel:c.channel, desc:(c.desc||'').slice(0,30)});
+      });
+    });
+    const complaintFine = complaintCount * COMPLAINT_FINE;
+
     if(level.type==='intern'){
-      const result=this._calcInternSalary(user,level,perf,att,leaves);
+      const result=this._calcInternSalary(user,level,perf,att,leaves,month);
       result.missingSummaryDays=missingSummaryDays;
       result.noSummaryFine=noSummaryFine;
       result.sopLateShifts=sopLateShifts;
       result.sopFine=sopFine;
       result.sopLateDetail=sopLateDetail;
-      result.deduct=(result.deduct||0)+noSummaryFine+sopFine;
+      result.complaintCount=complaintCount;
+      result.complaintFine=complaintFine;
+      result.complaintDetail=complaintDetail;
+      result.deduct=(result.deduct||0)+noSummaryFine+sopFine+complaintFine;
       result.net=Math.max(0,result.gross-result.deduct);
       return result;
     }
@@ -2371,18 +2596,30 @@ const Calc = {
         result.sopLateShifts=sopLateShifts;
         result.sopFine=sopFine;
         result.sopLateDetail=sopLateDetail;
-        result.deduct=(result.deduct||0)+sopFine;
-        result.net=Math.max(0, result.net-sopFine);
+      }
+      // 🆕 v10.3:客服也按客诉扣款
+      if(complaintFine>0){
+        result.complaintCount=complaintCount;
+        result.complaintFine=complaintFine;
+        result.complaintDetail=complaintDetail;
+      }
+      const totalExtra=(sopFine||0)+(complaintFine||0);
+      if(totalExtra>0){
+        result.deduct=(result.deduct||0)+totalExtra;
+        result.net=Math.max(0, result.net-totalExtra);
       }
       return result;
     }
-    const result=this._calcMuaSalary(user,level,perf,att,leaves);
+    const result=this._calcMuaSalary(user,level,perf,att,leaves,month);
     result.missingSummaryDays=missingSummaryDays;
     result.noSummaryFine=noSummaryFine;
     result.sopLateShifts=sopLateShifts;
     result.sopFine=sopFine;
     result.sopLateDetail=sopLateDetail;
-    result.deduct=(result.deduct||0)+noSummaryFine+sopFine;
+    result.complaintCount=complaintCount;
+    result.complaintFine=complaintFine;
+    result.complaintDetail=complaintDetail;
+    result.deduct=(result.deduct||0)+noSummaryFine+sopFine+complaintFine;
     result.net=Math.max(0,result.gross-result.deduct);
     return result;
   },
@@ -2422,10 +2659,9 @@ const Calc = {
     
     const totalGroups=photoGroups+makeupGroups;
     
-    // 🆕 v8:阶梯奖励 — 100 单 ¥300 / 200 单 ¥700(取最高档,可结算订单数)
+    // 🆕 v10.4:阶梯奖励简化 — 只保留 100 单 ¥300(取消 200 单 ¥700)
     let tierBonus=0, tierName='';
-    if(totalGroups>=200){tierBonus=700;tierName='达成 200 单 → ¥700'}
-    else if(totalGroups>=100){tierBonus=300;tierName='达成 100 单 → ¥300'}
+    if(totalGroups>=100){tierBonus=300;tierName='达成 100 单 → ¥300'}
     
     // 🆕 v8:客服好评奖(与他人一致的阶梯奖励)
     // 1平台¥3 / 2平台¥5 / 3平台¥8(每个客户独立计算)
@@ -2440,11 +2676,16 @@ const Calc = {
       }
     });
     
-    // 🆕 v10:云锦同行奖
-    const tenureBonus = this.calcTenureBonus(user.joinDate);
+    // 🆕 v10.3:取消按月分摊
+    const tenureBonus = 0;
     const tenureYears = Math.floor(this.monthsSinceJoin(user.joinDate)/12);
     
-    const gross=photoCommission+makeupCommission+tierBonus+reviewReward+tenureBonus;
+    // 🆕 v10.3:年终奖 + 直播奖(客服也可以参与直播)
+    const yearEnd = this.calcYearEndBonus(user.joinDate, month);
+    const yearEndBonus = yearEnd.amount;
+    const livestreamReward = this._calcLivestreamReward(perf);
+    
+    const gross=photoCommission+makeupCommission+tierBonus+reviewReward+tenureBonus+yearEndBonus+livestreamReward;
     const net=gross;
     
     // 转化率分母排除 cancel
@@ -2465,8 +2706,10 @@ const Calc = {
       // 🆕 v8 阶梯奖励 + 好评奖
       tierBonus, tierName,
       reviewCount, reviewReward,
-      // 🆕 v10 云锦同行奖
+      // 🆕 v10.3 年终奖 + 直播奖(取代 tenureBonus)
       tenureBonus, tenureYears,
+      yearEndBonus, yearEndLevel:yearEnd.level, yearEndIsPayMonth:yearEnd.isPayMonth,
+      livestreamReward,
       // 兼容化妆师字段
       baseSalary:0, attBonus:0, attBonusLost:false,
       totalPerf:0, ratio:0,
@@ -2489,6 +2732,30 @@ const CloudSync = {
   lastSync: 0,
   pendingQueue: [],    // 离线时的待同步队列
   syncing: false,
+  _syncStartedAt: 0,   // 🆕 v10.3:记录同步开始时间,用于超时强制解锁
+  
+  // 🆕 v10.3:获取同步锁(自动检测超时,超时强制解锁)
+  _acquireSyncLock(taskName){
+    const now = Date.now();
+    if(this.syncing){
+      // 如果上次同步开始已超过 60 秒,认为是僵死,强制解锁
+      if(now - this._syncStartedAt > 60000){
+        console.warn(`[Cloud] 同步锁僵死超过 60s,强制解锁(原任务: ${this._lastTask||'?'},新任务: ${taskName})`);
+        this.syncing = false;
+      }else{
+        return false;
+      }
+    }
+    this.syncing = true;
+    this._syncStartedAt = now;
+    this._lastTask = taskName;
+    return true;
+  },
+  
+  _releaseSyncLock(){
+    this.syncing = false;
+    this._syncStartedAt = 0;
+  },
 
   // Supabase 表名映射(与 STORES 一一对应)
   STORE_TABLE_MAP: {
@@ -2618,12 +2885,21 @@ const CloudSync = {
     }
     
     let res;
+    // 🆕 v10.6:AbortController 30 秒超时,防止网络卡死
+    const controller = new AbortController();
+    const timeoutMs = opts.timeout || 30000;
+    const timer = setTimeout(()=>controller.abort(), timeoutMs);
     try{
-      res=await fetch(url,{method, headers, body:bodyStr});
+      res=await fetch(url,{method, headers, body:bodyStr, signal:controller.signal});
     }catch(e){
+      clearTimeout(timer);
       // 这里捕获 fetch 抛的 TypeError 等
+      if(e.name==='AbortError'){
+        throw new Error(`网络请求超时(${timeoutMs/1000}秒未响应)。请检查网络后重试`);
+      }
       throw new Error(`网络错误: ${e.message}`);
     }
+    clearTimeout(timer);
     
     if(!res.ok){
       let detail='';
@@ -2646,6 +2922,8 @@ const CloudSync = {
     try{
       this.status='connecting';
       Bus.emit('cloud:status',this.status);
+      // 🆕 v10.5:同时检测时钟漂移(用 HEAD 请求拿服务器 Date 头)
+      this._detectClockSkew().catch(e=>console.warn('[Cloud] 时钟检测失败',e.message));
       // 验证所有 9 张表是否都存在
       const missing=[];
       for(const [store,table] of Object.entries(this.STORE_TABLE_MAP)){
@@ -2676,6 +2954,54 @@ const CloudSync = {
     }
   },
 
+  // 🆕 v10.5:检测客户端时钟漂移
+  // Supabase 响应头里有 Date: GMT 时间,与本地时钟比对
+  // 如果差距超过 60 秒,记录漂移值,后续打 _updatedAt 时校准
+  _clockSkewMs: 0,
+  async _detectClockSkew(){
+    try{
+      const url=this.cfg.url+'/rest/v1/yj_users?limit=0';
+      const resp=await fetch(url,{
+        method:'HEAD',
+        headers:{
+          apikey:this.cfg.anonKey,
+          Authorization:'Bearer '+this.cfg.anonKey
+        }
+      });
+      const serverDate=resp.headers.get('Date');
+      if(!serverDate)return;
+      const serverMs=new Date(serverDate).getTime();
+      const localMs=Date.now();
+      const skew=localMs-serverMs;  // 正数 = 本地比服务器快
+      this._clockSkewMs=skew;
+      if(Math.abs(skew)>60000){
+        console.warn(`[Cloud] ⚠️ 时钟漂移 ${Math.round(skew/1000)}s (本地${skew>0?'快':'慢'}于服务器)`);
+        // 如果漂移超过 5 分钟,弹一次提示给店长
+        if(Math.abs(skew)>300000 && Auth.current?.role==='admin'){
+          const seen=localStorage.getItem('yj_clock_warned')==='1';
+          if(!seen){
+            setTimeout(()=>{
+              if(typeof Toast!=='undefined'){
+                Toast.error(`⚠️ 设备时钟漂移 ${Math.abs(Math.round(skew/60000))} 分钟,可能导致同步异常。建议:设置 → 自动同步时间`);
+              }
+              localStorage.setItem('yj_clock_warned','1');
+            },2000);
+          }
+        }
+      }else{
+        console.log(`[Cloud] ✅ 时钟同步良好(漂移 ${skew}ms)`);
+      }
+    }catch(e){
+      console.warn('[Cloud] 时钟检测异常',e.message);
+    }
+  },
+  
+  // 🆕 v10.5:获取校准后的时间戳(服务器视角)
+  // 用于打 _updatedAt 时,即使客户端时钟错了,timestamp 也准确
+  serverNow(){
+    return Date.now() - (this._clockSkewMs||0);
+  },
+
   // 上传单条记录(用于实时同步,使用 upsert 语义)
   async pushOne(store, data){
     const table=this.STORE_TABLE_MAP[store];
@@ -2703,14 +3029,13 @@ const CloudSync = {
   // 增量拉取所有表
   async pullAll(){
     if(!this.enabled || this.status==='error')return {ok:false,msg:'云端未连接'};
-    // 🔧 防并发锁
-    if(this.syncing){
+    // 🔧 防并发锁(60 秒超时自动释放)
+    if(!this._acquireSyncLock('pullAll')){
       console.warn('[Cloud] 同步中,忽略重复 pullAll');
       return {ok:false,msg:'已有同步任务正在进行,请稍候'};
     }
     let total=0;
     try{
-      this.syncing=true;
       Bus.emit('cloud:status','syncing');
       for(const [store,table] of Object.entries(this.STORE_TABLE_MAP)){
         const rows=await this._request(table,{query:'?select=*'});
@@ -2734,7 +3059,7 @@ const CloudSync = {
       Bus.emit('cloud:status',this.status);
       return {ok:false,msg:e.message};
     }finally{
-      this.syncing=false;
+      this._releaseSyncLock();
     }
   },
 
@@ -2755,8 +3080,8 @@ const CloudSync = {
   // 全量推送所有本地数据到云端(初次同步用)
   async pushAll(){
     if(!this.enabled)return {ok:false,msg:'云端未配置'};
-    // 🔧 防并发锁:同时只能跑一个 pushAll
-    if(this.syncing){
+    // 🔧 防并发锁(60 秒超时自动释放)
+    if(!this._acquireSyncLock('pushAll')){
       console.warn('[Cloud] 同步中,忽略重复 pushAll');
       return {ok:false,msg:'已有同步任务正在进行,请稍候'};
     }
@@ -2764,7 +3089,6 @@ const CloudSync = {
     const errors=[];
     let currentTable='',currentStore='',currentRecord=null;
     try{
-      this.syncing=true;
       Bus.emit('cloud:status','syncing');
       for(const store of Object.keys(this.STORE_TABLE_MAP)){
         currentStore=store;
@@ -2824,7 +3148,7 @@ const CloudSync = {
         errors
       };
     }finally{
-      this.syncing=false;
+      this._releaseSyncLock();
     }
   },
 
@@ -2868,31 +3192,34 @@ const CloudSync = {
 
   // 处理待同步队列
   async flushQueue(){
-    if(!this.enabled || this.syncing)return;
+    if(!this.enabled)return;
     if(this.pendingQueue.length===0)return;
-    this.syncing=true;
+    if(!this._acquireSyncLock('flushQueue'))return;
     let success=0,fail=0;
     const remaining=[];
     const errors=[];  // 收集所有错误
-    for(const item of this.pendingQueue){
-      try{
-        if(item.op==='put')await this.pushOne(item.store,item.data);
-        else if(item.op==='delete')await this.deleteOne(item.store,item.data.id);
-        success++;
-      }catch(e){
-        fail++;
-        remaining.push(item);
-        const errMsg=e.message||String(e);
-        errors.push({store:item.store,op:item.op,id:item.data?.id,err:errMsg});
-        console.error(`[Cloud] 同步失败 ${item.op} ${item.store}/${item.data?.id}:`, errMsg);
+    try{
+      for(const item of this.pendingQueue){
+        try{
+          if(item.op==='put')await this.pushOne(item.store,item.data);
+          else if(item.op==='delete')await this.deleteOne(item.store,item.data.id);
+          success++;
+        }catch(e){
+          fail++;
+          remaining.push(item);
+          const errMsg=e.message||String(e);
+          errors.push({store:item.store,op:item.op,id:item.data?.id,err:errMsg});
+          console.error(`[Cloud] 同步失败 ${item.op} ${item.store}/${item.data?.id}:`, errMsg);
+        }
       }
+      this.pendingQueue=remaining;
+      this._saveQueue();
+      if(remaining.length===0)this.status='online';
+      else this.status='error';
+      Bus.emit('cloud:status',this.status);
+    }finally{
+      this._releaseSyncLock();
     }
-    this.pendingQueue=remaining;
-    this._saveQueue();
-    this.syncing=false;
-    if(remaining.length===0)this.status='online';
-    else this.status='error';
-    Bus.emit('cloud:status',this.status);
     return {success,fail,errors,firstError:errors[0]||null};
   },
 
@@ -3154,6 +3481,7 @@ const Router = {
       cs:()=>CustomerServiceModule.refresh(),
       orders:()=>OrderModule.refresh(),
       complaints:()=>ComplaintModule.refresh(),
+      reflection:()=>ReflectionModule.refresh(),
       sop:()=>SOPModule.refresh(),
       pet:()=>PetModule.refresh()
     };
@@ -3174,6 +3502,9 @@ const HomeModule = {
       $('#topName').textContent=u.name;
       $('#topRole').textContent=(LEVELS[u.level]||{}).name||(u.role==='admin'?'店长':'员工');
     }catch(e){console.warn('[Home] 顶部信息渲染失败',e)}
+
+    // 🆕 v10.5:同步状态条
+    this._renderSyncStatus();
 
     let perfAll=[],attAll=[],leavesAll=[],summariesAll=[],csReportsAll=[];
     try{
@@ -3199,7 +3530,7 @@ const HomeModule = {
         const monthSalaryTotal=users.reduce((s,emp)=>{
           try{
             const empWithCs={...emp,_csReports:csReportsAll.filter(r=>r.userId===emp.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===emp.id && r.date && r.date.startsWith(month))};
-            const sal=Calc.calcMonthSalary(empWithCs,perfAll,attAll,leavesAll,month,summariesAll);
+            const sal=Calc.calcMonthSalary(empWithCs,perfAll,attAll,leavesAll,month,summariesAll,csReportsAll);
             return s+(Number(sal.net)||0);
           }catch(e){
             console.error('[Home] 计算 '+emp.name+' 薪酬失败:',e);
@@ -3259,7 +3590,7 @@ const HomeModule = {
         let salary={net:0};
         try{
           const uWithCs={...u,_csReports:csReportsAll.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
-          salary=Calc.calcMonthSalary(uWithCs,perfAll,attAll,leavesAll,month,summariesAll)
+          salary=Calc.calcMonthSalary(uWithCs,perfAll,attAll,leavesAll,month,summariesAll,csReportsAll)
         }
         catch(e){console.warn('[Home] 个人薪酬计算失败',e)}
 
@@ -3308,6 +3639,7 @@ const HomeModule = {
         {icon:'✍️',name:'工作总结',desc:'AI 反馈',page:'summary'},
         {icon:'💰',name:'薪酬明细',desc:'纯提成',page:'salary'},
         {icon:'📚',name:'妆发学习',desc:'课程教程',page:'learning'},
+        {icon:'🎓',name:'复盘学习',desc:'真实客诉案例',page:'reflection'},
         {icon:'👤',name:'我的',desc:'资料/改密',page:'profile'}
       ];
     } else {
@@ -3322,6 +3654,7 @@ const HomeModule = {
         {icon:'💰',name:'薪酬明细',desc:isIntern?'补助/加班/好评':'实时计算',page:'salary'},
         {icon:'✨',name:'灵感记录',desc:'妆造/搭配',page:'inspiration'},
         {icon:'📚',name:'妆发学习',desc:'课程教程',page:'learning'},
+        {icon:'🎓',name:'复盘学习',desc:'真实客诉案例',page:'reflection'},
         {icon:'👤',name:'我的',desc:'资料/改密',page:'profile'}
       ];
     }
@@ -3347,6 +3680,119 @@ const HomeModule = {
         <div class="feature-name">${f.name}</div>
         <div class="feature-desc">${f.desc}</div>
       </div>`).join('');
+  },
+
+  // 🆕 v10.5:首页云端同步状态条
+  _renderSyncStatus(){
+    const bar=$('#syncStatusBar');
+    if(!bar)return;
+    
+    if(typeof CloudSync==='undefined' || !CloudSync.enabled){
+      bar.innerHTML=`<div class="card" style="margin-bottom:14px;background:#FEF3C7;border-left:4px solid #f59e0b;padding:10px 14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div style="font-size:13px;color:#b45309;line-height:1.6">
+            ⚠️ <strong>未配置云端同步</strong> · 数据仅保存在本设备<br>
+            <span style="font-size:11px">手机端的修改不会自动同步到电脑端</span>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="Router.go('cloud')" style="font-size:12px">去配置</button>
+        </div>
+      </div>`;
+      return;
+    }
+    
+    const lastSync=CloudSync.lastSync||0;
+    const queue=(CloudSync.pendingQueue||[]).length;
+    const now=Date.now();
+    const diff=now-lastSync;
+    const status=CloudSync.status;
+    
+    let label='', color='', bg='', icon='', sub='';
+    
+    if(queue>0){
+      icon='⏳';color='#b45309';bg='#FEF3C7';
+      label=`${queue} 条数据待同步`;
+      sub='点击右侧【立即推送】把待同步数据上传到云端';
+    }else if(status==='syncing'){
+      icon='🔄';color='#1e40af';bg='#E0F2FE';
+      label='正在同步中...';
+      sub='请稍候,同步完成会自动刷新';
+    }else if(status==='error'){
+      icon='⚠️';color='#991b1b';bg='#FEE2E2';
+      label='同步失败';
+      sub='请到【云端同步】页查看错误';
+    }else if(lastSync===0){
+      icon='⚡';color='#b45309';bg='#FEF3C7';
+      label='尚未同步';
+      sub='这是新设备?进【云端同步】点【拉取云端最新数据】';
+    }else if(diff<60000){
+      icon='✅';color='#15803d';bg='#D1FAE5';
+      label='数据最新';
+      sub=`刚才同步成功(${Math.round(diff/1000)} 秒前)`;
+    }else if(diff<600000){
+      icon='✅';color='#15803d';bg='#D1FAE5';
+      label='数据最新';
+      sub=`${Math.round(diff/60000)} 分钟前同步`;
+    }else if(diff<3600000){
+      icon='💡';color='#1e40af';bg='#E0F2FE';
+      label='建议刷新';
+      sub=`${Math.round(diff/60000)} 分钟未同步,点【拉取】更新到最新`;
+    }else{
+      icon='⚠️';color='#b45309';bg='#FEF3C7';
+      const hours=Math.round(diff/3600000);
+      label=`${hours} 小时未同步`;
+      sub='手机数据可能落后,建议立即拉取';
+    }
+    
+    // 时钟漂移警告
+    const skew=CloudSync._clockSkewMs||0;
+    let clockHint='';
+    if(Math.abs(skew)>120000){
+      clockHint=`<div style="margin-top:6px;padding:6px 8px;background:#fff;border-radius:4px;font-size:11px;color:#991b1b;border-left:3px solid #dc2626">
+        🕐 设备时钟漂移 ${Math.abs(Math.round(skew/60000))} 分钟,可能影响数据冲突解决。建议手机/电脑都开"自动设置时间"
+      </div>`;
+    }
+    
+    bar.innerHTML=`<div class="card" style="margin-bottom:14px;background:${bg};border-left:4px solid ${color};padding:10px 14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:180px">
+          <div style="font-size:13px;font-weight:600;color:${color}">${icon} ${label}</div>
+          <div style="font-size:11px;color:var(--c-ink-2);margin-top:2px">${sub}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${queue>0?`<button class="btn btn-sm btn-primary" onclick="HomeModule._quickPush()" style="font-size:11px;padding:4px 10px">⬆️ 立即推送</button>`:''}
+          <button class="btn btn-sm btn-ghost" onclick="HomeModule._quickPull()" style="font-size:11px;padding:4px 10px">⬇️ 拉取最新</button>
+        </div>
+      </div>
+      ${clockHint}
+    </div>`;
+  },
+  
+  async _quickPush(){
+    if(typeof CloudSync==='undefined' || !CloudSync.enabled){Toast.error('请先配置云端');return}
+    Toast.info('推送中...');
+    try{
+      const r=await CloudSync.flushQueue();
+      this._renderSyncStatus();
+      Toast.success(`✅ 推送完成`);
+    }catch(e){
+      Toast.error('推送失败:'+e.message);
+    }
+  },
+  
+  async _quickPull(){
+    if(typeof CloudSync==='undefined' || !CloudSync.enabled){Toast.error('请先配置云端');return}
+    Toast.info('拉取中...');
+    try{
+      const r=await CloudSync.pullAll();
+      if(r && r.ok){
+        Toast.success(`✅ 拉取 ${r.count} 条`);
+        this.refresh();
+      }else{
+        Toast.error('拉取失败:'+(r?.msg||'未知错误'));
+      }
+    }catch(e){
+      Toast.error('拉取异常:'+e.message);
+    }
   }
 };
 
@@ -3531,10 +3977,11 @@ const PerfModule = {
     $('#perfOvertime').value=0;
     $('#perfLate').value=0;
     $('#perfEarly').value=0;
-    this.state={items:{},customRows:[],reviews:[]};
+    this.state={items:{},customRows:[],reviews:[],livestreams:[]};
     this.renderItems();
     this.renderCustomRows();
     this.renderReviews();
+    this.renderLivestreams();
     this.updateSummary();
 
     // 如果今日有签到迟到/早退，自动带入
@@ -3760,6 +4207,139 @@ const PerfModule = {
     }).join('');
   },
 
+  // 🆕 v10.3 直播奖励
+  addLivestream(){
+    if(!this.state.livestreams)this.state.livestreams=[];
+    this.state.livestreams.push({hours:2, screenshot:'', note:''});
+    this.renderLivestreams();
+    this.updateSummary();
+  },
+  
+  removeLivestream(i){
+    this.state.livestreams.splice(i,1);
+    this.renderLivestreams();
+    this.updateSummary();
+  },
+  
+  updateLivestreamHours(i, hours){
+    if(!this.state.livestreams[i])return;
+    this.state.livestreams[i].hours=parseFloat(hours)||0;
+    this.renderLivestreams();
+    this.updateSummary();
+  },
+  
+  updateLivestreamNote(i, note){
+    if(!this.state.livestreams[i])return;
+    this.state.livestreams[i].note=note;
+  },
+  
+  async addLivestreamScreenshot(i){
+    if(!this.state.livestreams[i])return;
+    const input=document.createElement('input');
+    input.type='file';
+    input.accept='image/*';
+    input.onchange=async e=>{
+      const file=e.target.files[0];
+      if(!file)return;
+      // 压缩 + 转 base64
+      try{
+        const url = await new Promise((resolve,reject)=>{
+          const reader=new FileReader();
+          reader.onload=()=>{
+            const img=new Image();
+            img.onload=()=>{
+              const canvas=document.createElement('canvas');
+              const maxW=1200, maxH=1200;
+              let w=img.width, h=img.height;
+              if(w>maxW){h=h*maxW/w; w=maxW}
+              if(h>maxH){w=w*maxH/h; h=maxH}
+              canvas.width=w; canvas.height=h;
+              canvas.getContext('2d').drawImage(img,0,0,w,h);
+              resolve(canvas.toDataURL('image/jpeg',0.7));
+            };
+            img.onerror=reject;
+            img.src=reader.result;
+          };
+          reader.onerror=reject;
+          reader.readAsDataURL(file);
+        });
+        this.state.livestreams[i].screenshot=url;
+        this.renderLivestreams();
+        Toast.success('✅ 截图已上传');
+      }catch(err){
+        Toast.error('上传失败:'+err.message);
+      }
+    };
+    input.click();
+  },
+  
+  removeLivestreamScreenshot(i){
+    if(!this.state.livestreams[i])return;
+    this.state.livestreams[i].screenshot='';
+    this.renderLivestreams();
+  },
+  
+  // 计算单场奖励
+  _calcSingleLivestreamReward(hours){
+    const h = parseFloat(hours)||0;
+    if(h < 2)return 0;
+    let reward = 15;
+    if(h > 2)reward += Math.floor(h - 2) * 10;
+    return reward;
+  },
+  
+  renderLivestreams(){
+    const list=$('#livestreamList');
+    if(!list)return;
+    if(!this.state.livestreams)this.state.livestreams=[];
+    if(this.state.livestreams.length===0){
+      list.innerHTML='<div style="color:var(--c-muted);font-size:13px;padding:8px 0">暂无直播记录,点上方【+ 新增直播】开始记录</div>';
+      return;
+    }
+    list.innerHTML=this.state.livestreams.map((ls,i)=>{
+      const reward=this._calcSingleLivestreamReward(ls.hours);
+      const isValid=parseFloat(ls.hours)>=2;
+      const hasScreenshot=!!ls.screenshot;
+      return `<div style="display:block;padding:12px;border:1px solid var(--c-border);border-radius:8px;margin-bottom:10px;background:#fafafa">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <span style="font-weight:600;min-width:50px">📺 #${i+1}</span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;flex:1;min-width:140px">
+            时长:
+            <input type="number" class="form-input" value="${ls.hours||2}" step="0.5" min="0" 
+                   style="width:80px;display:inline-block" 
+                   oninput="PerfModule.updateLivestreamHours(${i}, this.value)">
+            <span>小时</span>
+          </label>
+          <span style="color:${isValid?'var(--c-success)':'var(--c-muted)'};font-weight:600;font-size:14px">
+            ${isValid?`+¥${reward}`:'<span style="font-size:11px">不足 2h 不发奖</span>'}
+          </span>
+          <span class="cnt-btn" onclick="PerfModule.removeLivestream(${i})" style="width:28px;height:28px;font-size:14px;cursor:pointer;background:#fee;color:#c00;border-radius:4px;display:flex;align-items:center;justify-content:center">×</span>
+        </div>
+        <input type="text" class="form-input" placeholder="备注:平台/标题/数据要点(选填)" 
+               value="${escapeHtml(ls.note||'')}" 
+               oninput="PerfModule.updateLivestreamNote(${i}, this.value)"
+               style="width:100%;margin-bottom:8px;font-size:13px">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+          ${hasScreenshot ? `
+            <div style="position:relative">
+              <img src="${ls.screenshot}" style="width:90px;height:90px;object-fit:cover;border-radius:4px;cursor:pointer;border:2px solid var(--c-success)" 
+                   data-action="preview-img" data-src="${ls.screenshot}" title="点击查看大图">
+              <div onclick="PerfModule.removeLivestreamScreenshot(${i})" 
+                   style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:var(--c-danger);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px">×</div>
+            </div>
+            <span style="color:var(--c-success);font-size:11px;font-weight:600">✅ 已上传截图</span>
+          ` : `
+            <button type="button" onclick="PerfModule.addLivestreamScreenshot(${i})" 
+                    style="padding:8px 14px;border:2px dashed var(--c-danger);background:#fff;border-radius:6px;cursor:pointer;color:var(--c-danger);font-size:13px;font-weight:600">
+              ⚠️ 上传直播数据截图(必传)
+            </button>
+            <span style="color:var(--c-muted);font-size:11px">未上传截图的直播不计入奖励</span>
+          `}
+        </div>
+      </div>`;
+    }).join('');
+  },
+
   // 收集所有业绩明细(预设+自定义)
   _collectItems(){
     const items=[];
@@ -3791,12 +4371,21 @@ const PerfModule = {
     const early=parseFloat($('#perfEarly').value)||0;
     const otPay=ot*OT_RATE;
     const deduct=(late+early)*LATE_FINE;
+    
+    // 🆕 v10.3 直播奖
+    let lsReward = 0;
+    (this.state.livestreams||[]).forEach(ls=>{
+      lsReward += this._calcSingleLivestreamReward(ls.hours);
+    });
 
     $('#sumTotal').textContent=fmtMoney(total);
     $('#sumCount').textContent=count;
     $('#sumReview').textContent=fmtMoney(reviewReward);
     $('#sumOt').textContent=fmtMoney(otPay);
     $('#sumDeduct').textContent='-'+fmtMoney(deduct);
+    // 如果存在直播奖元素就显示
+    const lsEl = $('#sumLivestream');
+    if(lsEl)lsEl.textContent=fmtMoney(lsReward);
   },
 
   async submit(){
@@ -3846,15 +4435,51 @@ const PerfModule = {
         note:r.note||'',
         images:r.images||[]
       })),
+      // 🆕 v10.3 直播奖励
+      livestreams:(this.state.livestreams||[]).filter(ls=>{
+        // 必须 ≥2 小时且有截图才记录
+        const h=parseFloat(ls.hours)||0;
+        return h>=2 && ls.screenshot;
+      }).map(ls=>({
+        hours:parseFloat(ls.hours)||0,
+        screenshot:ls.screenshot,
+        note:ls.note||''
+      })),
       overtimeHours:parseFloat($('#perfOvertime').value)||0,
       lateMinutes:parseFloat($('#perfLate').value)||0,
       earlyMinutes:parseFloat($('#perfEarly').value)||0,
       totalAmount:Calc.calcItemsTotal(items),
       createdAt:Date.now(),updatedAt:Date.now()
     };
+    
+    // 🆕 v10.3 直播校验
+    const lsList = this.state.livestreams||[];
+    if(lsList.length > 0){
+      // 提示忽略的(无截图或不足2h)
+      const ignored = lsList.filter(ls=>{
+        const h=parseFloat(ls.hours)||0;
+        return h<2 || !ls.screenshot;
+      });
+      if(ignored.length>0){
+        const reasons = [];
+        ignored.forEach((ls,i)=>{
+          const h=parseFloat(ls.hours)||0;
+          if(h<2)reasons.push(`#${lsList.indexOf(ls)+1}:不足2小时`);
+          else if(!ls.screenshot)reasons.push(`#${lsList.indexOf(ls)+1}:未上传截图`);
+        });
+        if(!confirm(`⚠️ 以下直播记录将不计入奖励:\n\n${reasons.join('\n')}\n\n继续提交?`)){
+          return;
+        }
+      }
+    }
     try{
       await DataStore.put('performance',rec);
       Logger.log('create_perf',`录入业绩 ${fmtMoney(rec.totalAmount)} (${items.length}项,${rec.reviews.length}条好评)`);
+      
+      // 🆕 v10.5:30 秒可撤销机制(员工录错可立即撤回,不必找店长)
+      const recId=rec.id;
+      this._lastRec={id:recId, time:Date.now(), amount:rec.totalAmount};
+      
       // 🆕 v9 PetSystem 挂钩:发饲料
       try{
         if(typeof PetSystem!=='undefined'){
@@ -3880,9 +4505,91 @@ const PerfModule = {
         Toast.success('业绩录入成功 ✨');
       }
       this.refresh();
+      // 🆕 v10.5:显示撤销条 30 秒
+      this._showUndoBar(recId, rec.totalAmount);
     }catch(e){
       Toast.error('保存失败:'+e.message);
       console.error(e);
+    }
+  },
+  
+  // 🆕 v10.5:显示 30 秒撤销条
+  _showUndoBar(recId, amount){
+    // 防重:先移除旧的
+    const old=document.getElementById('perfUndoBar');
+    if(old)old.remove();
+    
+    const bar=document.createElement('div');
+    bar.id='perfUndoBar';
+    bar.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:12px 18px;border-radius:24px;box-shadow:0 4px 16px rgba(0,0,0,.3);z-index:9999;display:flex;align-items:center;gap:12px;font-size:14px;animation:slideUp .3s ease-out';
+    bar.innerHTML=`
+      <span>✅ 已录入 ¥${amount}</span>
+      <span id="undoCountdown" style="font-size:12px;opacity:.7">30s</span>
+      <button onclick="PerfModule._undoLastRec('${recId}')" style="background:#fbbf24;color:#1f2937;border:none;padding:6px 14px;border-radius:14px;cursor:pointer;font-weight:600;font-size:13px">↩️ 撤销</button>
+    `;
+    document.body.appendChild(bar);
+    
+    let left=30;
+    const timer=setInterval(()=>{
+      left--;
+      const cd=document.getElementById('undoCountdown');
+      if(cd)cd.textContent=left+'s';
+      if(left<=0){
+        clearInterval(timer);
+        if(bar.parentNode)bar.remove();
+      }
+    },1000);
+    bar._timer=timer;
+  },
+  
+  async _undoLastRec(recId){
+    try{
+      const r=await DataStore.get('performance',recId);
+      if(!r){Toast.error('记录已不存在');return}
+      
+      // 检查时间窗
+      if(this._lastRec && this._lastRec.id===recId){
+        const elapsed=Date.now()-this._lastRec.time;
+        if(elapsed>35000){Toast.error('撤销窗口已过期');return}
+      }
+      
+      // 删除业绩
+      await DataStore.delete('performance',recId);
+      Logger.log('undo_perf',`撤销刚录入的业绩 ¥${r.totalAmount} (${r.date})`);
+      Toast.success('✅ 已撤销');
+      
+      // 同步扣回宠物饲料(粗略回退,不影响整体平衡)
+      try{
+        if(typeof PetSystem!=='undefined' && r.userId){
+          const pet=await PetSystem.getOrCreate(r.userId);
+          if(pet){
+            // 估算撤销饲料 = 业绩录入计算公式(简化:用 grantForPerformance 反向)
+            let feedToRevert=0;
+            for(const it of (r.items||[])){
+              const baseFeed=PET_FEED_BY_PRICE[it.unitPrice]||0;
+              feedToRevert+=Math.round((baseFeed||Math.round(it.unitPrice*0.15))*it.count);
+            }
+            // 好评饲料
+            (r.reviews||[]).forEach(rv=>{
+              if((rv.platforms||[]).length>0)feedToRevert+=15;
+            });
+            if(feedToRevert>0){
+              await PetSystem.grant(r.userId,'normal',-feedToRevert,'undo_perf','撤销业绩');
+            }
+          }
+        }
+      }catch(e){console.warn('[Pet] 撤销饲料失败',e)}
+      
+      // 移除撤销条
+      const bar=document.getElementById('perfUndoBar');
+      if(bar){
+        if(bar._timer)clearInterval(bar._timer);
+        bar.remove();
+      }
+      
+      this.refresh();
+    }catch(e){
+      Toast.error('撤销失败:'+e.message);
     }
   }
 };
@@ -3967,17 +4674,21 @@ const PerfListModule = {
         const count=(r.items||[]).reduce((s,i)=>s+i.count,0);
         const imgs=(r.items||[]).reduce((s,i)=>s+(i.images||[]).length,0);
         const detail=(r.items||[]).map(i=>`${i.typeName||i.type}×${i.count}`).join('、')||'-';
+        // 🆕 v10.5:代录徽章
+        const adminBadge=r.createdByAdmin?`<span style="display:inline-block;padding:1px 6px;background:#FFF8DC;color:#b45309;border-radius:8px;font-size:10px;margin-right:4px" title="店长代录">🏷</span>`:'';
+        const editedBadge=(r.editedByAdmin && r.editedByAdmin!==r.createdByAdmin)?`<span style="display:inline-block;padding:1px 6px;background:#FEF3C7;color:#92400e;border-radius:8px;font-size:10px;margin-right:4px" title="店长改过">✏️</span>`:'';
         const userCol=isAdmin?`<td>${escapeHtml(userMap[r.userId]||r.userId)}</td>`:'';
-        // 员工无删除权限(业绩是工资依据);只有店长能删
+        // 员工无删除权限(业绩是工资依据);店长可改、可删
         const opCol = isAdmin
           ? `<td><button class="btn btn-ghost btn-sm" data-action="view-perf" data-id="${r.id}">查看</button>
-                 <button class="btn btn-ghost btn-sm" data-action="del-perf" data-id="${r.id}" style="color:var(--c-danger)">删除</button></td>`
+                 <button class="btn btn-ghost btn-sm" data-action="edit-perf-admin" data-id="${r.id}" style="color:var(--c-primary)">改</button>
+                 <button class="btn btn-ghost btn-sm" data-action="del-perf" data-id="${r.id}" style="color:var(--c-danger)">删</button></td>`
           : `<td><button class="btn btn-ghost btn-sm" data-action="view-perf" data-id="${r.id}">查看</button>
                  <span style="font-size:11px;color:var(--c-muted);margin-left:6px" title="员工无删除权限,如需删除请联系店长">🔒</span></td>`;
         return `<tr>
           <td>${r.date}</td>
           ${userCol}
-          <td style="max-width:300px">${escapeHtml(detail)}</td>
+          <td style="max-width:300px">${adminBadge}${editedBadge}${escapeHtml(detail)}</td>
           <td class="td-center">${count}</td>
           <td class="td-money">${fmtMoney(amt)}</td>
           <td class="td-center">${(r.reviews||[]).length}</td>
@@ -3988,10 +4699,104 @@ const PerfListModule = {
     }
   },
 
+  // 🆕 v10.5:店长编辑业绩(快速调档位、加班、迟到、好评)
+  async editAdmin(id){
+    if(Auth.current.role!=='admin'){Toast.error('仅店长可编辑业绩');return}
+    const r=await DataStore.get('performance',id);
+    if(!r){Toast.error('记录不存在');return}
+    
+    const itemTotal=(r.items||[]).reduce((s,i)=>s+(i.subtotal||0),0);
+    const itemDesc=(r.items||[]).map(i=>`${i.typeName||i.type}×${i.count}`).join('、');
+    
+    Modal.open(`✏️ 编辑业绩 · ${r.date}`,`
+      <div style="line-height:1.85">
+        <div style="padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;margin-bottom:14px">
+          💡 此功能用于<strong>修正</strong>已录入的业绩(改加班/迟到/好评数量等)。<br>
+          ⚠️ 修改后会被标记 ✏️ 让员工知道店长改过。<br>
+          ⚠️ 如要修改业绩档位,建议:删除此条 → 用【代录业绩】重新录入(更清晰)
+        </div>
+        
+        <div style="padding:10px;background:var(--c-cream);border-radius:6px;margin-bottom:14px;font-size:13px">
+          <div><strong>员工:</strong> ${escapeHtml(r.userName||'-')}</div>
+          <div><strong>当前业绩:</strong> ¥${itemTotal.toFixed(2)} (${itemDesc||'无'})</div>
+        </div>
+        
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-item"><label class="form-label">加班(小时)</label>
+            <input type="number" class="form-input" id="epOT" value="${r.overtimeHours||0}" step="0.5" min="0"></div>
+          <div class="form-item"><label class="form-label">迟到(分钟)</label>
+            <input type="number" class="form-input" id="epLate" value="${r.lateMinutes||0}" step="1" min="0"></div>
+        </div>
+        <div class="form-item" style="margin-top:10px">
+          <label class="form-label">早退(分钟)</label>
+          <input type="number" class="form-input" id="epEarly" value="${r.earlyMinutes||0}" step="1" min="0">
+        </div>
+        <div style="margin-top:14px;padding:10px;background:#FFF8DC;border-radius:6px;font-size:12px;line-height:1.7">
+          ✅ 同时<strong>同步到考勤记录</strong>(如有)<br>
+          ✅ 操作日志会留痕,员工业绩明细会显示 ✏️ 徽章<br>
+          🛡 业绩档位/数量不在此处修改(避免误改金额)
+        </div>
+      </div>
+    `,async()=>{
+      try{
+        const newOT=parseFloat($('#epOT').value)||0;
+        const newLate=parseInt($('#epLate').value)||0;
+        const newEarly=parseInt($('#epEarly').value)||0;
+        
+        const oldOT=r.overtimeHours||0, oldLate=r.lateMinutes||0, oldEarly=r.earlyMinutes||0;
+        if(newOT===oldOT && newLate===oldLate && newEarly===oldEarly){
+          Toast.error('没有改动,无需保存');
+          return false;
+        }
+        
+        r.overtimeHours=newOT;
+        r.lateMinutes=newLate;
+        r.earlyMinutes=newEarly;
+        r.editedByAdmin=Auth.current.id;
+        r.editedByAdminName=Auth.current.name;
+        r.editedAt=Date.now();
+        await DataStore.put('performance',r);
+        
+        // 同步考勤
+        const allAtt=await DataStore.all('attendance');
+        const attRec=allAtt.find(a=>a.userId===r.userId && a.date===r.date);
+        if(attRec){
+          attRec.overtimeHours=newOT;
+          attRec.lateMinutes=newLate;
+          attRec.earlyMinutes=newEarly;
+          attRec.status=newLate>0?'late':(newEarly>0?'early':'normal');
+          await DataStore.put('attendance',attRec);
+        }
+        
+        Logger.log('admin_edit_perf',`改 ${r.userName} ${r.date}: 加班${oldOT}→${newOT}h, 迟到${oldLate}→${newLate}min, 早退${oldEarly}→${newEarly}min`);
+        Toast.success('✅ 已保存修改');
+        this.refresh();
+      }catch(e){
+        Toast.error('保存失败:'+e.message);
+        return false;
+      }
+    });
+  },
+
   async viewDetail(id){
     const r=await DataStore.get('performance',id);
     if(!r)return;
-    let html=`<p><strong>日期：</strong>${r.date}</p>
+    
+    // 🆕 v10.5:代录标记
+    let badgeHtml='';
+    if(r.createdByAdmin){
+      const adminName=r.adminCreatorName||'店长';
+      badgeHtml=`<div style="margin-bottom:10px;padding:8px 12px;background:#FFF8DC;border-left:3px solid var(--c-gold);border-radius:4px;font-size:12px">
+        🏷 <strong>${escapeHtml(adminName)}</strong> 代录 · 录入于 ${new Date(r.createdAt).toLocaleString('zh-CN')}
+      </div>`;
+    }
+    if(r.editedByAdmin && r.editedByAdmin!==r.createdByAdmin){
+      badgeHtml+=`<div style="margin-bottom:10px;padding:8px 12px;background:#FEF3C7;border-left:3px solid #f59e0b;border-radius:4px;font-size:12px">
+        ✏️ 店长修改过 · 最后修改于 ${new Date(r.updatedAt).toLocaleString('zh-CN')}
+      </div>`;
+    }
+    
+    let html=badgeHtml + `<p><strong>日期：</strong>${r.date}</p>
       <p><strong>总金额：</strong>${fmtMoney(Calc.getAmount(r))}</p><hr style="margin:10px 0;border:none;border-top:1px solid var(--c-border)">`;
     (r.items||[]).forEach(i=>{
       html+=`<div style="margin-bottom:12px"><strong>${escapeHtml(i.typeName||i.type)}</strong> × ${i.count} = ${fmtMoney(i.subtotal)}`;
@@ -4591,7 +5396,7 @@ const SalaryModule = {
     const csReports=await DataStore.all('cs_reports');
     const sopAll=await DataStore.all('sop_records');
     const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,targetMonth)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(targetMonth))};
-    const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,targetMonth,summaries);
+    const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,targetMonth,summaries,csReports);
 
     // 🆕 v10:月份筛选器(本月 + 过去 11 个月)
     const monthOpts = [];
@@ -4640,7 +5445,7 @@ const SalaryModule = {
           <div class="salary-section-body">
             <div class="salary-line"><span>🏆 ${escapeHtml(s.tierName)}</span><strong style="color:var(--c-success)">+${fmtMoney(s.tierBonus)}</strong></div>
             <div style="font-size:11px;color:var(--c-muted);padding:6px 8px;background:var(--c-cream);border-radius:4px;margin-top:6px">
-              规则:本月成交满 100 单 +¥300,满 200 单 +¥700(取最高档,不叠加)
+              规则:本月成交满 100 单 +¥300
             </div>
           </div>
         </div>`:`<div class="salary-section">
@@ -4648,7 +5453,7 @@ const SalaryModule = {
           <div class="salary-section-body">
             <div class="salary-line"><span>距 100 单还差 ${Math.max(0,100-s.totalGroups)} 单</span><strong>¥0</strong></div>
             <div style="font-size:11px;color:var(--c-muted);padding:6px 8px;background:var(--c-cream);border-radius:4px;margin-top:6px">
-              💪 加油!满 100 单 +¥300,满 200 单 +¥700
+              💪 加油!本月满 100 单 +¥300
             </div>
           </div>
         </div>`}
@@ -4722,6 +5527,7 @@ const SalaryModule = {
           <div class="salary-section-body">
             ${(s.noSummaryFine||0)>0?`<div class="salary-line"><span>未写工作总结 ${s.missingSummaryDays||0} 天 × ¥${NO_SUMMARY_FINE}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.noSummaryFine)}</strong></div>`:''}
             ${(s.sopFine||0)>0?`<div class="salary-line"><span>📋 SOP 执行未达标 ${s.sopLateShifts||0} 班次 × ¥${SOP_FINE_PER_SHIFT}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.sopFine)}</strong></div>`:''}
+            ${(s.complaintFine||0)>0?`<div class="salary-line"><span>📣 客诉扣款 ${s.complaintCount||0} 条 × ¥${COMPLAINT_FINE}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.complaintFine)}</strong></div>`:''}
           </div>
         </div>`:''}
         <div class="card" style="background:linear-gradient(135deg,var(--c-cream),var(--c-paper))">
@@ -4788,13 +5594,18 @@ const SalaryModule = {
             <span>全勤奖 ${s.attBonusLost?'<span class="badge badge-danger">未达全勤</span>':'<span class="badge badge-success">达成</span>'}</span>
             <strong>${fmtMoney(s.attBonus)}</strong>
           </div>
-          ${(s.tenureBonus||0)>0?`<div class="salary-line">
-            <span>🎋 云锦同行奖 <span class="badge badge-success">满 ${s.tenureYears} 年</span></span>
-            <strong style="color:#15803d">+${fmtMoney(s.tenureBonus)}</strong>
+          ${(s.yearEndBonus||0)>0?`<div class="salary-line">
+            <span>🎁 老员工年终奖 <span class="badge" style="background:#fef3c7;color:#b45309">满 ${s.yearEndLevel} 年 · 12月发放</span></span>
+            <strong style="color:#15803d">+${fmtMoney(s.yearEndBonus)}</strong>
+          </div>`:''}
+          ${(s.livestreamReward||0)>0?`<div class="salary-line">
+            <span>📺 直播奖励 <span class="badge badge-success">本月累计</span></span>
+            <strong style="color:#15803d">+${fmtMoney(s.livestreamReward)}</strong>
           </div>`:''}
           <div style="font-size:11px;color:var(--c-muted);padding:4px 8px;background:var(--c-cream);border-radius:4px;margin-top:6px">
             💡 全勤奖规则:迟到/早退 → 扣全勤;事假病假累计超 2 天 → 扣全勤;调休不扣<br>
-            🎋 云锦同行奖:满 1 年 +¥100/月,满 2 年 +¥200,以此类推(无上限)
+            🎁 老员工年终奖:满 1 年(进入第 2 年)→ 第 2 年 12 月发 ¥1200;满 N 年 → ¥(N×1200);仅 12 月发放<br>
+            📺 直播奖励:每场 ≥2 小时 ¥15,超 2h 每多 1h +¥10,需上传截图
           </div>
         </div>
       </div>
@@ -4834,6 +5645,7 @@ const SalaryModule = {
           <div class="salary-line"><span>请假 ${s.leaveDays} 天 × ¥100(调休不扣)</span><strong style="color:var(--c-danger)">-${fmtMoney(s.leaveFine)}</strong></div>
           <div class="salary-line"><span>未写工作总结 ${s.missingSummaryDays||0} 天 × ¥${NO_SUMMARY_FINE}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.noSummaryFine||0)}</strong></div>
           <div class="salary-line"><span>📋 SOP 执行未达标 ${s.sopLateShifts||0} 班次 × ¥${SOP_FINE_PER_SHIFT}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.sopFine||0)}</strong></div>
+          ${(s.complaintFine||0)>0?`<div class="salary-line"><span>📣 客诉扣款 ${s.complaintCount||0} 条 × ¥${COMPLAINT_FINE}</span><strong style="color:var(--c-danger)">-${fmtMoney(s.complaintFine)}</strong></div>`:''}
         </div>
       </div>
 
@@ -4885,7 +5697,7 @@ const SalaryModule = {
     
     const rows=users.map(u=>{
       const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
-      return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
+      return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries,csReports);
     });
     const totalNet=rows.reduce((s,r)=>s+r.net,0);
     const totalPerf=rows.reduce((s,r)=>s+r.totalPerf,0);
@@ -4946,7 +5758,7 @@ const UserModule = {
       const tenureMonths=Calc.monthsSinceJoin(u.joinDate);
       const tenureYears=Math.floor(tenureMonths/12);
       const tenureBadge=tenureYears>=1
-        ? `<span class="badge badge-success" title="入职 ${u.joinDate||'-'} · 满 ${tenureYears} 年">🎋 +¥${tenureYears*100}/月</span>`
+        ? `<span class="badge" style="background:#fef3c7;color:#b45309" title="入职 ${u.joinDate||'-'} · 满 ${tenureYears} 年 → 第 ${tenureYears+1} 年12月领 ¥${tenureYears*1200} 年终奖">🎁 满 ${tenureYears} 年</span>`
         : (u.joinDate?`<span class="badge" style="font-size:11px;color:var(--c-muted)">入职 ${tenureMonths} 月</span>`:'');
       const toggleBtn=u.active
         ? `<button class="btn btn-sm btn-ghost" data-action="toggle-user" data-id="${u.id}" style="color:var(--c-danger)">办理离职</button>`
@@ -4988,14 +5800,14 @@ const UserModule = {
           <option value="junior">初级化妆师(底薪+岗位500+基准1.5万)</option>
           <option value="middle" selected>中级化妆师(底薪+岗位800+基准2.5万)</option>
           <option value="senior">高级化妆师(底薪+岗位1200+基准3.5万)</option>
-          <option value="customer">线上客服(纯提成,妆造¥15/组,摄影¥20/组,100单+¥300,200单+¥700)</option>
+          <option value="customer">线上客服(纯提成,妆造¥15/组,摄影¥20/组,100单+¥300)</option>
         </select></div>
       <div class="form-item" style="margin-top:10px"><label class="form-label">初始密码</label>
         <input class="form-input" id="nuPass" value="123456">
         <div style="font-size:12px;color:var(--c-muted);margin-top:4px">员工首次登录建议提醒其在【我的】中修改密码</div>
       </div>
       <div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7">
-        💡 入职日期决定<strong>「云锦同行奖」</strong>:满 1 年起每年加 ¥100/月,满 2 年 ¥200,以此类推
+        💡 入职日期决定<strong>「老员工年终奖」</strong>:满 1 年(进入第 2 年)→ 第 2 年 12 月发 ¥1200;满 N 年 → ¥(N×1200);只在 12 月发放
       </div>`,
     async()=>{
       const username=$('#nuUser').value.trim();
@@ -5087,7 +5899,7 @@ const UserModule = {
           <option value="admin" ${u.role==='admin'?'selected':''}>店长</option>
         </select></div>
       ${u.joinDate?`<div style="margin-top:14px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7">
-        💡 当前云锦同行奖:${(()=>{const m=Calc.monthsSinceJoin(u.joinDate);const y=Math.floor(m/12);return y<1?'未满 1 年(无)':`满 ${y} 年 → +¥${y*100}/月`;})()}
+        💡 当前老员工年终奖:${(()=>{const m=Calc.monthsSinceJoin(u.joinDate);const y=Math.floor(m/12);return y<1?'未满 1 年(无年终奖)':`满 ${y} 年 → 今年 12 月可领 ¥${y*1200}`;})()}
       </div>`:''}
     `,async()=>{
       try{
@@ -6154,12 +6966,10 @@ const CustomerServiceModule = {
         const myDeals=myAll.filter(r=>r.status==='deal' && isSameMonth(r.bookingDate||r.dealAt, curMonth_)).length;
         if(myDeals===0 && day<15)return '';  // 月初无业绩时不打扰
         let tier='', nextTier='', progress=0, color='#10b981', icon='💪';
-        if(myDeals>=200){tier='🏆 已达成 200 单 → 奖 ¥700';color='#dc2626';icon='🏆';progress=100}
-        else if(myDeals>=100){
-          const remain=200-myDeals;
-          tier=`🎉 已达成 100 单 → 奖 ¥300`;
-          nextTier=`距 200 单 ¥700 还差 <strong>${remain} 单</strong>`;
-          color='#f59e0b';icon='🎉';progress=Math.round(myDeals/200*100);
+        if(myDeals>=100){
+          tier=`🏆 已达成 100 单 → 奖 ¥300`;
+          color='#dc2626';icon='🏆';progress=100;
+          nextTier=myDeals>=150?`继续保持!当前 ${myDeals} 单`:'本月奖励已锁定';
         }else{
           const remain=100-myDeals;
           nextTier=`距 100 单 ¥300 还差 <strong>${remain} 单</strong>`;
@@ -6452,6 +7262,16 @@ const CustomerServiceModule = {
             ⭐ ${filtered.filter(r=>r.starred).length} · 
             ⚠️ ${filtered.filter(r=>r.flagged).length} · 
             🌟 ${filtered.filter(r=>r.needReview).length}
+            ${(()=>{
+              const now=Date.now();
+              const sleepCount=filtered.filter(r=>{
+                const status=r.status||'pending';
+                if(!['pending','followup','booked','direct'].includes(status))return false;
+                const days=Math.floor((now-(r.updatedAt||r.createdAt||0))/86400000);
+                return days>=15;
+              }).length;
+              return sleepCount>0?` · <span style="color:#dc2626;font-weight:600">😴 沉睡 ${sleepCount}</span>`:'';
+            })()}
           </span>
           <div style="flex:1"></div>
           <button class="btn btn-sm btn-outline" data-action="cs-export-csv" style="font-size:12px">📥 导出 CSV(当前筛选)</button>
@@ -6687,10 +7507,26 @@ const CustomerServiceModule = {
   _renderCards(list,isAdmin){
     // 🆕 v6:预先取一次员工 map(避免循环里频繁查找)
     const userMap=this._userMap||{};
+    const now=Date.now();
     return list.map(r=>{
       const stars=r.starred?'⭐':'';
       const flag=r.flagged?'⚠️':'';
       const reviewMark=r.needReview?'🌟要好评':'';
+      
+      // 🆕 v10.5:沉睡客资检测(待跟进/跟进中超过 N 天没动)
+      // 取 updatedAt 或 createdAt 作为最后活动时间
+      const status=r.status||'pending';
+      let sleepBadge='';
+      const inactiveStatuses=['pending','followup','booked','direct'];
+      if(inactiveStatuses.includes(status)){
+        const lastActive=r.updatedAt||r.createdAt||0;
+        const daysIdle=Math.floor((now-lastActive)/86400000);
+        if(daysIdle>=15){
+          sleepBadge=`<span style="display:inline-block;padding:2px 8px;background:#FEE2E2;color:#991b1b;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px" title="${daysIdle} 天未跟进,建议联系">😴 沉睡 ${daysIdle}天</span>`;
+        }else if(daysIdle>=7){
+          sleepBadge=`<span style="display:inline-block;padding:2px 8px;background:#FEF3C7;color:#b45309;border-radius:10px;font-size:11px;font-weight:600;margin-left:6px" title="${daysIdle} 天没跟进">⏳ ${daysIdle}天</span>`;
+        }
+      }
       
       // 人数显示
       const peopleParts=[];
@@ -6714,7 +7550,6 @@ const CustomerServiceModule = {
       const teamStr=teamParts.length?teamParts.join(' · '):'';
       
       // 根据当前状态决定可用快捷按钮
-      const status=r.status||'pending';
       const actionBtns=[];
       // 跟进 → 进入到 booked/direct
       if(status==='pending'||status==='followup'){
@@ -6735,7 +7570,7 @@ const CustomerServiceModule = {
         <div class="card" style="margin-bottom:10px;cursor:pointer;border-left:4px solid ${r.flagged?'#ef4444':r.starred?'#f59e0b':status==='deal'?'#22c55e':status==='arrived'?'#3b82f6':'var(--c-border)'}" data-action="cs-edit" data-id="${r.id}">
           <div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">
             <div style="flex:1;min-width:180px">
-              <div style="font-weight:600;font-size:15px">${stars}${flag}${escapeHtml(r.customerName||'(未填客户名)')}${totalPeople>0?` <span style="font-size:12px;color:var(--c-muted);font-weight:normal">(共${totalPeople}人)</span>`:''}</div>
+              <div style="font-weight:600;font-size:15px">${stars}${flag}${escapeHtml(r.customerName||'(未填客户名)')}${totalPeople>0?` <span style="font-size:12px;color:var(--c-muted);font-weight:normal">(共${totalPeople}人)</span>`:''}${sleepBadge}</div>
               <div style="font-size:13px;color:var(--c-muted);margin-top:4px;line-height:1.7">
                 📅 ${escapeHtml(r.bookingDate||'未定')} ${escapeHtml(r.bookingTime||'')}<br>
                 📞 ${escapeHtml(r.phone||'未填电话')}<br>
@@ -7474,11 +8309,24 @@ const CustomerServiceModule = {
       id:uuid(),
       level:'mid',
       category:'service',
+      channel:'makeup',  // 🆕 v10.3 默认妆发渠道
+      responsibleIds:[],  // 🆕 v10.3 责任人 IDs
       desc:'',followUp:'',resolution:'',
       status:'pending',
       createdAt:Date.now(),
       by:Auth.current.name
     };
+    
+    // 🆕 v10.3 加载所有可选责任人(在职员工)
+    const allUsers=(await DataStore.all('users')).filter(u=>u.active);
+    const userOpts=allUsers.map(u=>{
+      const checked=(c.responsibleIds||[]).includes(u.id)?'checked':'';
+      const lvName=(LEVELS[u.level]||{}).name||'';
+      return `<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--c-cream);border-radius:4px;font-size:12px;cursor:pointer;margin:3px">
+        <input type="checkbox" name="cpResp" value="${u.id}" ${checked}>
+        ${escapeHtml(u.name)} <span style="color:var(--c-muted);font-size:10px">${lvName}</span>
+      </label>`;
+    }).join('');
 
     Modal.open(isEdit?'✏️ 编辑客诉':'📝 登记客诉',`
       <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -7487,11 +8335,18 @@ const CustomerServiceModule = {
             ${Object.entries(COMPLAINT_LEVELS).map(([k,v])=>`<option value="${k}" ${k===c.level?'selected':''}>${v.name} · ${v.desc}</option>`).join('')}
           </select>
         </div>
-        <div class="form-item"><label class="form-label required">原因分类</label>
-          <select class="form-select" id="cpCategory">
-            ${Object.entries(COMPLAINT_CATEGORIES).map(([k,v])=>`<option value="${k}" ${k===c.category?'selected':''}>${v.name}</option>`).join('')}
+        <div class="form-item"><label class="form-label required">📍 发生渠道</label>
+          <select class="form-select" id="cpChannel">
+            ${Object.entries(COMPLAINT_CHANNELS).map(([k,v])=>`<option value="${k}" ${k===(c.channel||'makeup')?'selected':''}>${v.name}</option>`).join('')}
           </select>
         </div>
+      </div>
+
+      <div class="form-item" style="margin-top:10px">
+        <label class="form-label required">原因分类</label>
+        <select class="form-select" id="cpCategory">
+          ${Object.entries(COMPLAINT_CATEGORIES).map(([k,v])=>`<option value="${k}" ${k===c.category?'selected':''}>${v.name} · ${v.desc}</option>`).join('')}
+        </select>
       </div>
 
       <div class="form-item" style="margin-top:10px">
@@ -7500,15 +8355,29 @@ const CustomerServiceModule = {
       </div>
 
       <div class="form-item" style="margin-top:10px">
+        <label class="form-label">👤 责任人(可多选,每人扣 ¥${COMPLAINT_FINE} / 条)</label>
+        <div style="padding:8px;background:#FFF8DC;border-radius:6px;max-height:160px;overflow-y:auto">
+          ${userOpts || '<span style="color:var(--c-muted);font-size:12px">暂无在职员工</span>'}
+        </div>
+        <div style="font-size:11px;color:var(--c-muted);margin-top:4px">💡 不勾任何人 = 系统暂不扣款,等核实后再补勾</div>
+      </div>
+
+      <div class="form-item" style="margin-top:10px">
         <label class="form-label">📞 回访情况</label>
         <textarea class="form-textarea" id="cpFollowUp" rows="2" placeholder="如: 5月3日 张店长 微信回访,客户表示...">${escapeHtml(c.followUp||'')}</textarea>
+      </div>
+
+      <div class="form-item" style="margin-top:10px">
+        <label class="form-label">💡 复盘要点(供员工学习,选填)</label>
+        <textarea class="form-textarea" id="cpReflection" rows="2" placeholder="如:接待时多留意客户的肢体语言、提前确认妆容偏好...">${escapeHtml(c.reflectionPoints||'')}</textarea>
+        <div style="font-size:11px;color:var(--c-muted);margin-top:4px">✨ 已解决的客诉会进入【复盘学习库】供全员查看(脱敏)</div>
       </div>
 
       <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
         <div class="form-item"><label class="form-label">处理结果</label>
           <select class="form-select" id="cpResolution">
             <option value="">(未处理)</option>
-            ${COMPLAINT_RESOLUTIONS.map(r=>`<option value="${r}" ${r===c.resolution?'selected':''}>${r}</option>`).join('')}
+            ${COMPLAINT_RESOLUTIONS.map(rs=>`<option value="${rs}" ${rs===c.resolution?'selected':''}>${rs}</option>`).join('')}
           </select>
         </div>
         <div class="form-item"><label class="form-label required">当前状态</label>
@@ -7519,16 +8388,24 @@ const CustomerServiceModule = {
       </div>
 
       <div style="margin-top:10px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7;color:var(--c-ink-2)">
-        💡 <strong>状态联动</strong>:如果选"高 + 待处理/跟进中",该订单提成会暂停结算,直到状态改为"已处理并满意"。
+        💡 <strong>状态联动</strong>:<br>
+        • 高 + 待处理/跟进中 → 该订单提成<strong>暂停结算</strong>(责任人薪资里冻结)<br>
+        • 选了责任人 → 每位责任人当月薪资<strong>扣 ¥${COMPLAINT_FINE}</strong>(若严重等级为高,还会同步扣宠物饲料 30 颗 + 心情清零)<br>
+        • 误登记可在客诉列表里编辑或删除
       </div>
     `,async()=>{
       try{
+        // 收集勾选的责任人
+        const checkedResp=Array.from(document.querySelectorAll('input[name="cpResp"]:checked')).map(el=>el.value);
         const data={
           ...c,
           level:$('#cpLevel').value,
+          channel:$('#cpChannel').value,
           category:$('#cpCategory').value,
+          responsibleIds:checkedResp,
           desc:$('#cpDesc').value.trim(),
           followUp:$('#cpFollowUp').value.trim(),
+          reflectionPoints:$('#cpReflection')?.value.trim()||'',  // 🆕 v10.6 复盘要点
           resolution:$('#cpResolution').value,
           status:$('#cpStatus').value,
           updatedAt:Date.now()
@@ -7543,7 +8420,7 @@ const CustomerServiceModule = {
         r.updatedAt=Date.now();
         
         await DataStore.put('cs_reports',r);
-        Logger.log(isEdit?'complaint_edit':'complaint_add',`${r.customerName} 客诉 ${data.level}/${data.status}`);
+        Logger.log(isEdit?'complaint_edit':'complaint_add',`${r.customerName} 客诉 ${data.level}/${data.status}/责${data.responsibleIds.length}人`);
         // 🆕 v9 PetSystem 挂钩:高级客诉对相关化妆师扣 30 颗 + 心情清零
         try{
           if(typeof PetSystem!=='undefined' && data.level==='high' && !isEdit){
@@ -7742,12 +8619,13 @@ const OrderModule = {
 };
 
 
-/* ============ 🆕 v6 ComplaintModule 客诉管理 ============ */
+/* ============ 🆕 v6 ComplaintModule 客诉管理(v10.6 升级) ============ */
 const ComplaintModule = {
   filterMonth: 'all',
   filterCategory: 'all',
   filterLevel: 'all',
   filterStatus: 'all',
+  filterChannel: 'all',  // 🆕 v10.6:渠道筛选(妆造/摄影)
 
   async refresh(){
     const u=Auth.current;
@@ -7767,7 +8645,7 @@ const ComplaintModule = {
     
     // 应用筛选
     let filtered=flat;
-    const fm=this.filterMonth, fc=this.filterCategory, fl=this.filterLevel, fs=this.filterStatus;
+    const fm=this.filterMonth, fc=this.filterCategory, fl=this.filterLevel, fs=this.filterStatus, fch=this.filterChannel;
     if(fm!=='all'){
       filtered=filtered.filter(c=>{
         const d=new Date(c.createdAt).toISOString().slice(0,7);
@@ -7777,6 +8655,16 @@ const ComplaintModule = {
     if(fc!=='all')filtered=filtered.filter(c=>c.category===fc);
     if(fl!=='all')filtered=filtered.filter(c=>c.level===fl);
     if(fs!=='all')filtered=filtered.filter(c=>c.status===fs);
+    // 🆕 v10.6:渠道筛选
+    if(fch!=='all'){
+      if(fch==='makeup'){
+        filtered=filtered.filter(c=>c.channel==='makeup' || c.category==='makeup_skill');
+      }else if(fch==='photo'){
+        filtered=filtered.filter(c=>c.channel==='photo' || c.channel==='retouch' || c.category==='photo_skill' || c.category==='retouching');
+      }else{
+        filtered=filtered.filter(c=>c.channel===fch);
+      }
+    }
     
     filtered.sort((a,b)=>b.createdAt-a.createdAt);
     
@@ -7803,12 +8691,37 @@ const ComplaintModule = {
       high: flat.filter(c=>c.level==='high').length
     };
     
+    // 🆕 v10.6:按渠道分组统计
+    const chStats={
+      makeup: flat.filter(c=>c.channel==='makeup' || c.category==='makeup_skill').length,
+      photo: flat.filter(c=>c.channel==='photo' || c.channel==='retouch' || c.category==='photo_skill' || c.category==='retouching').length,
+      cs: flat.filter(c=>c.channel==='customer_service').length,
+      other: flat.filter(c=>!c.channel || (c.channel!=='makeup' && c.channel!=='photo' && c.channel!=='retouch' && c.channel!=='customer_service')).length
+    };
+    
     $('#complaintsContent').innerHTML=`
       <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
-        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">📞 客诉管理</div>
-        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px">
-          结构化原因分析 + 解决过程记录 + 一键导出 + 高级未解决暂停结算
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:18px;font-weight:700;color:var(--c-primary)">📞 客诉管理 · 复盘学习库</div>
+            <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px">
+              结构化原因 + 责任人扣 ¥${COMPLAINT_FINE} + 妆造/摄影分组 + 复盘学习
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" data-action="complaints-add-standalone" style="font-size:13px">➕ 直接登记客诉</button>
         </div>
+      </div>
+
+      <!-- 🆕 v10.6:渠道 Tab -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
+        ${[
+          {key:'all', name:'📋 全部', count:flat.length, color:'var(--c-primary)'},
+          {key:'makeup', name:'💄 妆造客诉', count:chStats.makeup, color:'#dc2626'},
+          {key:'photo', name:'📷 摄影/修图客诉', count:chStats.photo, color:'#1e40af'},
+          {key:'customer_service', name:'📞 客服客诉', count:chStats.cs, color:'#7c3aed'},
+        ].map(t=>`<button class="btn btn-sm ${t.key===fch?'btn-primary':'btn-outline'}" 
+                          data-action="complaints-channel" data-key="${t.key}"
+                          style="font-size:12px;border-color:${t.key===fch?'var(--c-primary)':t.color};color:${t.key===fch?'#fff':t.color}">${t.name} (${t.count})</button>`).join('')}
       </div>
 
       <div class="overview-grid" style="margin-top:14px">
@@ -7895,6 +8808,162 @@ const ComplaintModule = {
     this.refresh();
   },
 
+  // 🆕 v10.6:切换渠道 Tab(全部/妆造/摄影/客服)
+  switchChannel(key){
+    this.filterChannel=key||'all';
+    this.refresh();
+  },
+
+  // 🆕 v10.6:店长直接登记客诉(不绑订单)— 用于内部事件、客户私聊、电话投诉等
+  async addStandalone(){
+    const u=Auth.current;
+    if(u.role!=='admin'){Toast.error('仅店长可登记');return}
+    
+    // 加载所有员工(供责任人选择)
+    const allUsers=(await DataStore.all('users')).filter(uu=>uu.active);
+    const userOpts=allUsers.map(uu=>{
+      const lvName=(LEVELS[uu.level]||{}).name||'';
+      return `<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--c-cream);border-radius:4px;font-size:12px;cursor:pointer;margin:3px">
+        <input type="checkbox" name="csaResp" value="${uu.id}">
+        ${escapeHtml(uu.name)} <span style="color:var(--c-muted);font-size:10px">${lvName}</span>
+      </label>`;
+    }).join('');
+    
+    Modal.open(`📝 直接登记客诉(独立条目)`,`
+      <div style="line-height:1.85">
+        <div style="padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7;margin-bottom:14px">
+          💡 此功能用于<strong>不绑订单</strong>的客诉登记:<br>
+          • 客户私下微信吐槽 / 抖音差评 / 电话投诉<br>
+          • 店内事件、员工失误观察(用于复盘)<br>
+          • 大众点评/小红书等平台的差评<br>
+          ⚠️ 责任人当月薪资每人扣 <strong>¥${COMPLAINT_FINE}</strong>
+        </div>
+        
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-item">
+            <label class="form-label">客户姓名(可选)</label>
+            <input class="form-input" id="csaCust" placeholder="如:张女士 / 不知名">
+          </div>
+          <div class="form-item">
+            <label class="form-label">日期</label>
+            <input type="date" class="form-input" id="csaDate" value="${today()}" max="${today()}">
+          </div>
+        </div>
+        
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+          <div class="form-item"><label class="form-label required">严重等级</label>
+            <select class="form-select" id="csaLevel">
+              ${Object.entries(COMPLAINT_LEVELS).map(([k,v])=>`<option value="${k}" ${k==='mid'?'selected':''}>${v.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-item"><label class="form-label required">📍 发生渠道</label>
+            <select class="form-select" id="csaChannel">
+              ${Object.entries(COMPLAINT_CHANNELS).map(([k,v])=>`<option value="${k}" ${k==='makeup'?'selected':''}>${v.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        
+        <div class="form-item" style="margin-top:10px">
+          <label class="form-label required">原因分类</label>
+          <select class="form-select" id="csaCategory">
+            ${Object.entries(COMPLAINT_CATEGORIES).map(([k,v])=>`<option value="${k}">${v.name} · ${v.desc}</option>`).join('')}
+          </select>
+        </div>
+        
+        <div class="form-item" style="margin-top:10px">
+          <label class="form-label required">具体情况</label>
+          <textarea class="form-textarea" id="csaDesc" rows="3" placeholder="客户具体反映了什么 / 店内发生了什么"></textarea>
+        </div>
+        
+        <div class="form-item" style="margin-top:10px">
+          <label class="form-label">👤 责任人(可多选,每人扣 ¥${COMPLAINT_FINE})</label>
+          <div style="padding:8px;background:#FFF8DC;border-radius:6px;max-height:160px;overflow-y:auto">
+            ${userOpts || '<span style="color:var(--c-muted);font-size:12px">暂无在职员工</span>'}
+          </div>
+        </div>
+        
+        <div class="form-item" style="margin-top:10px">
+          <label class="form-label">📞 回访情况(可选)</label>
+          <textarea class="form-textarea" id="csaFollowUp" rows="2" placeholder="如:5月3日 张店长 微信回访,客户表示..."></textarea>
+        </div>
+        
+        <div class="form-item" style="margin-top:10px">
+          <label class="form-label">💡 复盘要点(供员工学习,选填)</label>
+          <textarea class="form-textarea" id="csaReflection" rows="2" placeholder="如:接待时多留意客户的肢体语言、提前确认妆容偏好..."></textarea>
+        </div>
+        
+        <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+          <div class="form-item"><label class="form-label">处理结果</label>
+            <select class="form-select" id="csaResolution">
+              <option value="">(未处理)</option>
+              ${COMPLAINT_RESOLUTIONS.map(rs=>`<option value="${rs}">${rs}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-item"><label class="form-label required">当前状态</label>
+            <select class="form-select" id="csaStatus">
+              ${Object.entries(COMPLAINT_STATUSES).map(([k,v])=>`<option value="${k}" ${k==='pending'?'selected':''}>${v.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+    `,async()=>{
+      const desc=$('#csaDesc').value.trim();
+      if(!desc){Toast.error('请填写具体情况');return false}
+      const checkedResp=Array.from(document.querySelectorAll('input[name="csaResp"]:checked')).map(el=>el.value);
+      
+      try{
+        // 创建一个占位订单(standalone:true)承载这条独立客诉
+        const cust=$('#csaCust').value.trim()||'(店内事件)';
+        const date=$('#csaDate').value||today();
+        const level=$('#csaLevel').value;
+        const channel=$('#csaChannel').value;
+        const category=$('#csaCategory').value;
+        
+        const placeholder={
+          id:uuid(),
+          customerName:cust,
+          phone:'',
+          bookingDate:date,
+          status:'standalone',
+          standalone:true,  // 🆕 标记为独立客诉
+          source:'内部登记',
+          createdAt:Date.now(),
+          updatedAt:Date.now(),
+          createdBy:u.id,
+          createdByName:u.name,
+          complaints:[{
+            id:uuid(),
+            level:level,
+            channel:channel,
+            category:category,
+            responsibleIds:checkedResp,
+            desc:desc,
+            followUp:$('#csaFollowUp').value.trim(),
+            reflectionPoints:$('#csaReflection').value.trim(),  // 🆕 复盘要点
+            resolution:$('#csaResolution').value,
+            status:$('#csaStatus').value,
+            createdAt:Date.now(),
+            updatedAt:Date.now(),
+            by:u.name
+          }],
+          hasComplaint:true
+        };
+        if(placeholder.complaints[0].status==='resolved'){
+          placeholder.complaints[0].resolvedAt=Date.now();
+        }
+        
+        await DataStore.put('cs_reports',placeholder);
+        Logger.log('complaint_standalone',`独立登记客诉:${cust} ${level}/${channel} 责${checkedResp.length}人`);
+        Toast.success(`✅ 已登记独立客诉(扣款 ¥${checkedResp.length*COMPLAINT_FINE})`);
+        this.refresh();
+      }catch(e){
+        Toast.error('登记失败:'+e.message);
+        console.error('[Complaint] addStandalone:',e);
+        return false;
+      }
+    });
+  },
+
   switchView(){this.refresh()},
 
   async openComplaint(orderId, idx){
@@ -7951,6 +9020,177 @@ const ComplaintModule = {
     setTimeout(()=>URL.revokeObjectURL(url),2000);
     Logger.log('cp_export',`导出客诉 ${f.length} 条`);
     Toast.success(`✅ 已导出 ${f.length} 条客诉`);
+  }
+};
+
+
+/* ============ 🆕 v10.6 ReflectionModule 复盘学习库 ============ */
+/* 全员可见 · 展示已解决的客诉(脱敏)+ 复盘要点 · 帮助新人快速学习 */
+const ReflectionModule = {
+  filterChannel: 'all',
+  filterCategory: 'all',
+  
+  async refresh(){
+    const u=Auth.current;
+    if(!u){
+      $('#reflectionContent').innerHTML='';
+      return;
+    }
+    
+    // 拉取所有 cs_reports,提取已解决的客诉
+    const all=await DataStore.all('cs_reports');
+    const cases=[];
+    all.forEach(r=>{
+      (r.complaints||[]).forEach(c=>{
+        if(c.status!=='resolved')return;  // 只看已解决的
+        cases.push({...c, _order:r});
+      });
+    });
+    cases.sort((a,b)=>(b.resolvedAt||b.updatedAt||0)-(a.resolvedAt||a.updatedAt||0));
+    
+    // 应用渠道筛选
+    let filtered=cases;
+    if(this.filterChannel!=='all'){
+      if(this.filterChannel==='makeup'){
+        filtered=filtered.filter(c=>c.channel==='makeup' || c.category==='makeup_skill');
+      }else if(this.filterChannel==='photo'){
+        filtered=filtered.filter(c=>['photo','retouch'].includes(c.channel) || ['photo_skill','retouching'].includes(c.category));
+      }else{
+        filtered=filtered.filter(c=>c.channel===this.filterChannel);
+      }
+    }
+    if(this.filterCategory!=='all')filtered=filtered.filter(c=>c.category===this.filterCategory);
+    
+    // 渠道分组统计
+    const stats={
+      makeup: cases.filter(c=>c.channel==='makeup' || c.category==='makeup_skill').length,
+      photo: cases.filter(c=>['photo','retouch'].includes(c.channel) || ['photo_skill','retouching'].includes(c.category)).length,
+      cs: cases.filter(c=>c.channel==='customer_service').length,
+      reception: cases.filter(c=>c.channel==='reception').length
+    };
+    
+    const fch=this.filterChannel, fc=this.filterCategory;
+    
+    $('#reflectionContent').innerHTML=`
+      <div class="card" style="background:linear-gradient(135deg,#FFF8DC,#FFFAF0);border:1px solid var(--c-gold)">
+        <div style="font-size:18px;font-weight:700;color:var(--c-primary)">🎓 复盘学习库</div>
+        <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px;line-height:1.7">
+          这里收录了门店<strong>已妥善处理</strong>的真实客诉案例(已脱敏)<br>
+          每一条都是一次成长机会 — 看看是什么原因、店长怎么处理的、有什么经验可借鉴
+        </div>
+      </div>
+      
+      <!-- 渠道 Tab -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px">
+        ${[
+          {key:'all', name:'📋 全部', count:cases.length, color:'var(--c-primary)'},
+          {key:'makeup', name:'💄 妆造案例', count:stats.makeup, color:'#dc2626'},
+          {key:'photo', name:'📷 摄影/修图案例', count:stats.photo, color:'#1e40af'},
+          {key:'customer_service', name:'📞 客服案例', count:stats.cs, color:'#7c3aed'},
+          {key:'reception', name:'🎫 前台案例', count:stats.reception, color:'#15803d'},
+        ].map(t=>`<button class="btn btn-sm ${t.key===fch?'btn-primary':'btn-outline'}" 
+                          data-action="reflection-channel" data-key="${t.key}"
+                          style="font-size:12px;${t.key===fch?'':'border-color:'+t.color+';color:'+t.color}">${t.name} (${t.count})</button>`).join('')}
+      </div>
+      
+      <!-- 分类筛选 -->
+      <div class="card" style="margin-top:10px;padding:10px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--c-muted)">原因分类:</span>
+          <select class="form-select" id="rfFilterCat" style="font-size:13px;width:auto;min-width:160px">
+            <option value="all" ${fc==='all'?'selected':''}>全部原因</option>
+            ${Object.entries(COMPLAINT_CATEGORIES).map(([k,v])=>`<option value="${k}" ${fc===k?'selected':''}>${v.name}</option>`).join('')}
+          </select>
+          <span style="font-size:12px;color:var(--c-muted);margin-left:auto">筛出 ${filtered.length}/${cases.length}</span>
+        </div>
+      </div>
+      
+      ${filtered.length===0?`
+        <div class="card" style="margin-top:14px;text-align:center;padding:50px 20px;color:var(--c-muted)">
+          <div style="font-size:48px;margin-bottom:14px">📭</div>
+          <div style="font-size:14px;line-height:1.7">${cases.length===0?'还没有已处理的客诉案例<br>店长处理客诉后,这里会自动收录可学习的案例':'当前筛选条件下没有匹配的案例'}</div>
+        </div>
+      `:`
+        <div style="margin-top:14px">
+          ${filtered.map((c,i)=>this._renderCase(c, i)).join('')}
+        </div>
+      `}
+    `;
+    
+    // 绑定筛选
+    const sel=$('#rfFilterCat');
+    if(sel)sel.addEventListener('change',()=>{
+      this.filterCategory=sel.value;
+      this.refresh();
+    });
+  },
+  
+  // 渲染单条复盘案例(脱敏)
+  _renderCase(c, idx){
+    const ch=COMPLAINT_CHANNELS[c.channel]||{name:'其他'};
+    const cat=COMPLAINT_CATEGORIES[c.category]||{name:'其他'};
+    const lv=COMPLAINT_LEVELS[c.level]||{name:'-',color:'#888'};
+    const date=c.resolvedAt?new Date(c.resolvedAt).toLocaleDateString('zh-CN'):'-';
+    
+    // 脱敏:客户名只保留姓 + "女士/先生"
+    const customer=c._order?.customerName||'';
+    let maskCustomer='匿名';
+    if(customer && customer!=='(店内事件)' && customer.length>0){
+      maskCustomer=customer.charAt(0)+'某'+(customer.includes('女士')||customer.includes('小姐')?'女士':(customer.includes('先生')?'先生':''));
+    }else if(customer==='(店内事件)'){
+      maskCustomer='店内事件';
+    }
+    
+    return `<div class="card" style="margin-bottom:12px;padding:14px;border-left:4px solid ${lv.color}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <div>
+          <span style="display:inline-block;padding:2px 8px;background:${lv.color}22;color:${lv.color};border-radius:10px;font-size:11px;font-weight:600;margin-right:6px">${lv.name}</span>
+          <span style="display:inline-block;padding:2px 8px;background:var(--c-cream);border-radius:10px;font-size:11px;margin-right:6px">${ch.name}</span>
+          <span style="display:inline-block;padding:2px 8px;background:#FFF8DC;border-radius:10px;font-size:11px">${cat.name}</span>
+        </div>
+        <div style="font-size:11px;color:var(--c-muted)">案例 #${idx+1} · ${date} 解决</div>
+      </div>
+      
+      <div style="margin-top:10px;padding:10px;background:#FEE2E2;border-radius:6px">
+        <div style="font-size:11px;color:#991b1b;font-weight:600;margin-bottom:4px">📌 客户/事件:${escapeHtml(maskCustomer)}</div>
+        <div style="font-size:13px;line-height:1.7;color:var(--c-ink)">${escapeHtml(c.desc||'(未记录)')}</div>
+      </div>
+      
+      ${c.followUp?`
+        <div style="margin-top:8px;padding:10px;background:#FEF3C7;border-radius:6px">
+          <div style="font-size:11px;color:#b45309;font-weight:600;margin-bottom:4px">📞 处理过程</div>
+          <div style="font-size:13px;line-height:1.7;color:var(--c-ink)">${escapeHtml(c.followUp)}</div>
+        </div>
+      `:''}
+      
+      ${c.resolution?`
+        <div style="margin-top:8px;padding:10px;background:#D4EDDA;border-radius:6px">
+          <div style="font-size:11px;color:#15803d;font-weight:600;margin-bottom:4px">✅ 处理结果</div>
+          <div style="font-size:13px;line-height:1.7;color:var(--c-ink)">${escapeHtml(c.resolution)}</div>
+        </div>
+      `:''}
+      
+      ${c.reflectionPoints?`
+        <div style="margin-top:8px;padding:10px;background:linear-gradient(135deg,#E0F2FE,#fff);border-radius:6px;border:1px dashed #1e40af">
+          <div style="font-size:11px;color:#1e40af;font-weight:700;margin-bottom:4px">💡 复盘要点(店长总结)</div>
+          <div style="font-size:13px;line-height:1.85;color:var(--c-ink)">${escapeHtml(c.reflectionPoints)}</div>
+        </div>
+      `:''}
+      
+      ${!c.reflectionPoints && Auth.current?.role==='admin'?`
+        <div style="margin-top:8px;text-align:center">
+          <button class="btn btn-sm btn-ghost" style="font-size:11px;color:var(--c-muted)" 
+                  onclick="alert('提示:进入【📣 客诉管理】编辑此条客诉,在「复盘要点」字段填写经验总结,员工就能在这里看到。')">
+            ✏️ 这条还没填写复盘要点(点这里看怎么填)
+          </button>
+        </div>
+      `:''}
+    </div>`;
+  },
+  
+  switchChannel(key){
+    this.filterChannel=key||'all';
+    this.refresh();
   }
 };
 
@@ -8291,18 +9531,52 @@ const PetModule = {
       .sort(()=>Math.random()-0.5)
       .slice(0,4);
     
+    // 🆕 v10.7:根据【等级 + 状态】综合选图
+    // 等级解锁的皮肤是 base 状态;心情/饱食可临时切换到 eat/sleep
+    // 优先级:饥饿(sleep) > 极佳(eat) > 等级解锁皮肤(skin)
+    let petState;
+    if(isHungry){
+      petState = 'sleep';  // 饿了萎靡
+    }else if(isHappy && pet.level>=2){
+      petState = 'eat';    // 心情好且 LV2+ 显示开心吃东西
+    }else{
+      // 用等级解锁的默认皮肤
+      petState = lvInfo.skin || 'base';
+    }
+    
     let html = `
       <div class="pet-stage v10-paper-card v10-kintsugi" style="text-align:center">
         <div class="pet-bubble" id="petBubble">${escapeHtml(bubble)}</div>
         <div class="pet-emoji-big ${isHungry?'hungry':''}" id="petInteract" data-action="pet-interact" 
-             style="cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent" 
-             title="点我互动">${t.emoji}</div>
+             style="cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;display:inline-block" 
+             title="点我互动">${renderPetVisual(pet.type, petState, 140)}</div>
         <div style="font-size:20px;font-weight:700;color:var(--c-primary);margin-top:6px;letter-spacing:2px">${t.name}</div>
         <div style="font-size:13px;color:var(--c-muted)">${t.desc}</div>
         <div style="margin-top:10px">${stateBadge}</div>
         <div style="margin-top:14px;display:inline-block;padding:6px 14px;background:linear-gradient(135deg,#FFD700,#FFA500);color:#fff;border-radius:20px;font-weight:700;letter-spacing:1px">
           Lv.${pet.level} · ${lvInfo.title}
         </div>
+        ${(()=>{
+          // 🆕 v10.7:升级进度条
+          const cur=pet.growth||0;
+          const nextLv=PET_LEVELS[pet.level]||null;  // 下一级(数组索引 = 当前等级)
+          if(!nextLv)return `<div style="margin-top:8px;font-size:11px;color:var(--c-gold)">🏆 已达最高等级!</div>`;
+          const prevGrowth=lvInfo.growth||0;
+          const needGrowth=nextLv.growth||0;
+          const progress=Math.min(100, Math.round((cur-prevGrowth)/(needGrowth-prevGrowth)*100));
+          const remaining=Math.max(0, needGrowth-cur);
+          return `
+            <div style="margin-top:8px;font-size:11px;color:var(--c-muted)">
+              下一级 <strong style="color:var(--c-primary)">Lv.${nextLv.lv} ${nextLv.title}</strong> 还需 <strong style="color:var(--c-primary)">${remaining}</strong> 成长
+            </div>
+            <div style="margin-top:4px;width:80%;max-width:280px;margin-left:auto;margin-right:auto;height:8px;background:#eee;border-radius:4px;overflow:hidden">
+              <div style="width:${progress}%;height:100%;background:linear-gradient(90deg,#FFD700,#FFA500);transition:width .3s"></div>
+            </div>
+            <div style="margin-top:4px;font-size:10px;color:var(--c-muted)">
+              ${cur} / ${needGrowth} 成长值 · ${progress}%
+              ${nextLv.skin && nextLv.skin!==lvInfo.skin?` · <span style="color:#dc2626">🎁 升级解锁新皮肤!</span>`:''}
+            </div>`;
+        })()}
         <div style="margin-top:10px;font-size:11px;color:var(--c-muted)">💡 点击宠物可与其互动</div>
       </div>
       
@@ -8417,7 +9691,7 @@ const PetModule = {
             const olv = PET_LEVELS.find(l=>l.lv===p.level)||{title:'初识'};
             const oHungry = (p.satiety||0) < PET_SATIETY_LOW;
             return `<div style="text-align:center;padding:10px;background:rgba(255,248,220,0.5);border-radius:8px;border:1px dashed rgba(196,168,107,0.3)">
-              <div style="font-size:42px;line-height:1;${oHungry?'filter:grayscale(0.5);opacity:0.7':''}">${ot.emoji}</div>
+              <div style="${oHungry?'filter:grayscale(0.5);opacity:0.7':''}">${renderPetVisual(p.type, oHungry?'sleep':'base', 64)}</div>
               <div style="font-size:12px;font-weight:600;margin-top:6px;color:var(--c-primary)">${escapeHtml(ot.name)}</div>
               <div style="font-size:11px;color:var(--c-muted)">${escapeHtml(ouser.name)} · Lv.${p.level}</div>
             </div>`;
@@ -8465,7 +9739,7 @@ const PetModule = {
             const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}`;
             return `<div style="display:flex;align-items:center;gap:12px;padding:10px;background:${i<3?'linear-gradient(135deg,#FFF8DC,#fff)':'var(--c-cream)'};border-radius:6px;margin-bottom:6px">
               <div style="font-size:18px;font-weight:700;width:30px;text-align:center">${medal}</div>
-              <div style="font-size:32px">${t.emoji}</div>
+              <div>${renderPetVisual(p.type, 'base', 48)}</div>
               <div style="flex:1">
                 <div style="font-weight:600">${escapeHtml(p.user.name)}</div>
                 <div style="font-size:12px;color:var(--c-muted)">${t.name} · 成长 ${p.growth}</div>
@@ -8555,7 +9829,7 @@ const PetModule = {
                  data-action="pet-choose" data-type="${k}"
                  onmouseover="this.style.borderColor='var(--c-gold)'" 
                  onmouseout="this.style.borderColor='transparent'">
-              <div style="font-size:48px">${v.emoji}</div>
+              <div>${renderPetVisual(k, "base", 80)}</div>
               <div style="font-weight:700;margin-top:6px;color:var(--c-primary)">${v.name}</div>
               <div style="font-size:11px;color:var(--c-muted);margin-top:4px">${v.desc}</div>
             </div>
@@ -8597,7 +9871,7 @@ const PetModule = {
                  data-action="pet-do-change" data-type="${k}"
                  onmouseover="this.style.borderColor='var(--c-gold)';this.style.transform='scale(1.05)'" 
                  onmouseout="this.style.borderColor='transparent';this.style.transform='scale(1)'">
-              <div style="font-size:48px">${v.emoji}</div>
+              <div>${renderPetVisual(k, "base", 80)}</div>
               <div style="font-weight:700;margin-top:6px;color:var(--c-primary)">${v.name}</div>
               <div style="font-size:11px;color:var(--c-muted);margin-top:4px">${v.desc}</div>
             </div>
@@ -8866,7 +10140,7 @@ const TotalSalaryModule = {
 
     const rows=users.map(u=>{
       const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
-      return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
+      return Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries,csReports);
     });
 
     // 总和
@@ -8972,6 +10246,7 @@ const TotalSalaryModule = {
     const allLeaves=(await DataStore.all('leaves')).filter(r=>r.userId===userId);
     const allSummaries=(await DataStore.all('summaries')).filter(r=>r.userId===userId);
     const allCs=(await DataStore.all('cs_reports')).filter(r=>r.userId===userId);
+    const allCsAll=await DataStore.all('cs_reports');  // 🆕 v10.3:全店,用于客诉扣款
     const allSop=(await DataStore.all('sop_records')).filter(r=>r.userId===userId);
     
     const monthPerf=allPerf.filter(r=>r.date && r.date.startsWith(month));
@@ -8985,7 +10260,7 @@ const TotalSalaryModule = {
       _csReports:allCs.filter(r=>isSameMonth(r.bookingDate,month)),
       _sopRecords:allSop.filter(r=>r.date && r.date.startsWith(month))
     };
-    const s=Calc.calcMonthSalary(userWithCs,allPerf,allAtt,allLeaves,month,allSummaries);
+    const s=Calc.calcMonthSalary(userWithCs,allPerf,allAtt,allLeaves,month,allSummaries,allCsAll);
     
     // 生成月份选项
     const monthOpts=[];
@@ -9018,6 +10293,8 @@ const TotalSalaryModule = {
           ${s.tierBonus?`<tr><td>🎉 阶梯奖励</td><td class="td-money" style="color:#15803d">+¥${s.tierBonus} (${s.tierName})</td></tr>`:''}
           ${s.reviewReward?`<tr><td>好评奖</td><td class="td-money">¥${s.reviewReward} (${s.reviewCount} 位客户)</td></tr>`:''}
           ${s.tenureBonus?`<tr><td>🎋 云锦同行奖</td><td class="td-money" style="color:#15803d">+¥${s.tenureBonus} (满 ${s.tenureYears} 年)</td></tr>`:''}
+          ${(s.yearEndBonus||0)>0?`<tr><td>🎁 老员工年终奖</td><td class="td-money" style="color:#15803d">+¥${s.yearEndBonus} (满 ${s.yearEndLevel} 年 · 12月)</td></tr>`:''}
+          ${(s.livestreamReward||0)>0?`<tr><td>📺 直播奖励</td><td class="td-money" style="color:#15803d">+¥${s.livestreamReward}</td></tr>`:''}
           ${s.blockedCount?`<tr><td style="color:#dc2626">⚠️ 暂停结算(高级未解决客诉)</td><td class="td-money" style="color:#dc2626">-¥${s.blockedAmount} (${s.blockedCount} 单)</td></tr>`:''}
           <tr style="border-top:2px solid var(--c-primary)"><td><strong>实发合计</strong></td><td class="td-money" style="color:var(--c-primary);font-size:16px"><strong>¥${(s.net||0).toLocaleString()}</strong></td></tr>
         </table>
@@ -9052,6 +10329,8 @@ const TotalSalaryModule = {
           <tr><td>底薪</td><td class="td-money">¥${s.baseSalary}</td></tr>
           <tr><td>全勤奖 ${s.attBonusLost?'<span style="color:#dc2626;font-size:11px">(未达全勤)</span>':'<span style="color:#15803d;font-size:11px">(达成)</span>'}</td><td class="td-money">¥${s.attBonus}</td></tr>
           ${s.tenureBonus?`<tr><td>🎋 云锦同行奖</td><td class="td-money" style="color:#15803d">+¥${s.tenureBonus} (满 ${s.tenureYears} 年)</td></tr>`:''}
+          ${(s.yearEndBonus||0)>0?`<tr><td>🎁 老员工年终奖</td><td class="td-money" style="color:#15803d;font-weight:700">+¥${s.yearEndBonus} (满 ${s.yearEndLevel} 年 · 12月发放)</td></tr>`:''}
+          ${(s.livestreamReward||0)>0?`<tr><td>📺 直播奖励</td><td class="td-money" style="color:#15803d">+¥${s.livestreamReward}</td></tr>`:''}
           <tr><td>岗位工资</td><td class="td-money">¥${s.jobPay} (基准 ¥${s.jobBase}, 完成 ${s.ratio}%)</td></tr>
           <tr><td>超额提成</td><td class="td-money">¥${s.bonus} (超 ¥${(s.overAmount||0).toLocaleString()})</td></tr>
           <tr><td>加班费</td><td class="td-money">¥${s.overtimePay} (${s.overtimeHours}h×¥${OT_RATE})</td></tr>
@@ -9060,6 +10339,7 @@ const TotalSalaryModule = {
           <tr style="background:#FEE2E2"><td>请假扣</td><td class="td-money" style="color:#dc2626">-¥${s.leaveFine} (${s.leaveDays} 天)</td></tr>
           ${(s.noSummaryFine||0)>0?`<tr style="background:#FEE2E2"><td>未写总结扣</td><td class="td-money" style="color:#dc2626">-¥${s.noSummaryFine} (${s.missingSummaryDays} 天)</td></tr>`:''}
           ${(s.sopFine||0)>0?`<tr style="background:#FEE2E2"><td>SOP 未达标扣</td><td class="td-money" style="color:#dc2626">-¥${s.sopFine} (${s.sopLateShifts} 班次)</td></tr>`:''}
+          ${(s.complaintFine||0)>0?`<tr style="background:#FEE2E2"><td>📣 客诉扣款</td><td class="td-money" style="color:#dc2626">-¥${s.complaintFine} (${s.complaintCount} 条 × ¥${COMPLAINT_FINE})</td></tr>`:''}
           <tr style="border-top:2px solid var(--c-primary);background:var(--c-cream)"><td><strong>应发合计</strong></td><td class="td-money"><strong>¥${(s.gross||0).toLocaleString()}</strong></td></tr>
           <tr style="background:var(--c-cream)"><td><strong>扣款合计</strong></td><td class="td-money" style="color:#dc2626"><strong>-¥${(s.deduct||0).toLocaleString()}</strong></td></tr>
           <tr style="border-top:2px solid var(--c-primary)"><td><strong>实发合计</strong></td><td class="td-money" style="color:var(--c-primary);font-size:16px"><strong>¥${(s.net||0).toLocaleString()}</strong></td></tr>
@@ -9221,7 +10501,24 @@ const CloudModule = {
           <div style="font-weight:600;color:var(--c-primary);margin-bottom:6px">🔬 同步问题排查工具</div>
           <div style="font-size:12px;color:var(--c-ink-2);margin-bottom:8px">如果同步失败,点这个按钮跑一遍完整诊断,会直接显示失败原因和解决方法</div>
           <button class="btn btn-primary" data-action="cloud-diagnostic" style="width:100%">🔬 一键全链路诊断</button>
+          ${CloudSync.syncing?`<button class="btn btn-outline btn-sm" data-action="cloud-reset-lock" style="width:100%;margin-top:6px;color:var(--c-danger);border-color:var(--c-danger)">🔓 强制重置同步锁(同步卡死时点)</button>`:''}
         </div>`:''}
+        
+        <!-- 🆕 v10.7:宠物图片调试工具 -->
+        <div style="margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#FFF8DC,#FAF0E6);border-radius:8px;border:2px solid #F59E0B">
+          <div style="font-weight:600;color:#92400e;margin-bottom:6px">🎨 宠物图片调试</div>
+          <div style="font-size:12px;color:var(--c-ink-2);margin-bottom:8px;line-height:1.6">
+            如果宠物显示的是 emoji 而不是图片,可能是仓库里的文件名跟代码不一致。<br>
+            当前图床 URL:<br>
+            <code style="display:block;background:#fff;padding:6px;border-radius:4px;font-size:11px;word-break:break-all;margin-top:4px">${escapeHtml(PET_IMG_BASE)}</code>
+            智能探测会按顺序尝试:fox-base.png → fox_base.png → fox.png → 灵狐.png<br>
+            点【🔍 测试图片访问】会一次性试 5 种命名,告诉您哪些能加载
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" data-action="cloud-test-pet-img" style="flex:1;font-size:12px">🔍 测试图片访问</button>
+            <button class="btn btn-sm btn-outline" data-action="cloud-set-pet-base" style="flex:1;font-size:12px">⚙️ 改图床 URL</button>
+          </div>
+        </div>
         ${cfg?`<div style="margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#E0F2FE,#F0F9FF);border-radius:8px;border:2px solid #3b82f6">
           <div style="font-weight:600;color:#1e40af;margin-bottom:6px">📲 多设备同步必读</div>
           <div style="font-size:12px;color:var(--c-ink-2);margin-bottom:8px;line-height:1.7">
@@ -9552,11 +10849,31 @@ const CloudModule = {
         DROP POLICY IF EXISTS "anon_all" ON yj_users;<br>
         CREATE POLICY "anon_all" ON yj_users FOR ALL USING (true) WITH CHECK (true);
         </code>(对每张表都执行一次)`;
-    }else if(lowerMsg.includes('400')||lowerMsg.includes('column')||lowerMsg.includes('schema')){
-      diagnosis='📋 表结构不匹配';
-      advice=`<strong>原因</strong>:Supabase 的表结构和系统期望的不一致(可能您改过表)。<br><br>
-        <strong>解决</strong>:在 Supabase 删除所有 yj_* 表 → 重新执行【📋 查看建表 SQL】<br>
-        ⚠️ 注意:这会清空云端数据,但本地数据不受影响,推送后又能上来`;
+    }else if(lowerMsg.includes('400')||lowerMsg.includes('column')||lowerMsg.includes('schema')||lowerMsg.includes('pgrst204')||lowerMsg.includes('payload')){
+      diagnosis='📋 表结构不匹配(列缺失或类型不对)';
+      advice=`<strong>最常见原因</strong>:Supabase 表里少了 <code>payload</code> 列(JSON 字段),或新加的字段没在表里。<br><br>
+        <strong>快速解决</strong>(推荐):<br>
+        1. 进 Supabase → SQL Editor<br>
+        2. 执行下面这段 SQL:<br>
+        <code style="display:block;background:#1a1a1a;color:#0f0;padding:8px;border-radius:4px;margin:6px 0;font-size:11px">
+        -- 给每张表的 payload 列加上(如果已存在会跳过)<br>
+        ALTER TABLE yj_users ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_performance ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_attendance ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_cs_reports ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_leaves ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_summaries ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_settings ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_inspirations ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_operation_logs ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_pets ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_feed_logs ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_sop_records ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        ALTER TABLE yj_trash ADD COLUMN IF NOT EXISTS payload JSONB;<br>
+        </code>
+        3. 回这里点【⬆️ 全量推送】重试<br><br>
+        <strong>彻底重做</strong>(数据多时谨慎):<br>
+        在 Supabase 删除所有 yj_* 表 → 重新执行【📋 查看建表 SQL】(本地数据不丢)`;
     }else if(lowerMsg.includes('cors')||lowerMsg.includes('failed to fetch')||lowerMsg.includes('network')){
       diagnosis='🌐 网络连接异常';
       advice=`<strong>原因</strong>:浏览器无法访问 Supabase 服务器。<br><br>
@@ -9571,8 +10888,15 @@ const CloudModule = {
       diagnosis='⚙️ Supabase 服务器异常';
       advice='Supabase 服务可能暂时不可用,稍后再试。或登录 Supabase 控制台查看项目状态。';
     }else{
-      diagnosis='❓ 未知错误';
-      advice='请把下面的错误详情截图发给系统管理员。';
+      diagnosis='❓ 未知错误 — 请展开下方"错误详情"';
+      advice=`<strong>无法自动识别错误类型。</strong>请按以下顺序排查:<br><br>
+        1. 点下方 ▸ <strong>错误详情</strong> 展开 → 看具体英文错误<br>
+        2. 常见错误对照:<br>
+        &nbsp;&nbsp;• <code>PGRST204</code> 或 <code>column 'xxx' does not exist</code> → 表结构错(见上方 SQL)<br>
+        &nbsp;&nbsp;• <code>42501</code> 或 <code>row-level security</code> → RLS 策略问题(见 401 解决方案)<br>
+        &nbsp;&nbsp;• <code>payload too large</code> → 单条数据太大(可能含 base64 图片)<br>
+        &nbsp;&nbsp;• <code>duplicate key</code> → 重复主键(同步过程中数据冲突)<br>
+        3. 如仍不确定,**截图错误详情发给我**(开发者)`;
     }
     
     Modal.open('☁️ 同步失败 · 智能诊断',`
@@ -9582,9 +10906,9 @@ const CloudModule = {
           <div style="font-size:13px;color:var(--c-ink-2);font-family:monospace;word-break:break-all">${escapeHtml(msg)}</div>
         </div>
         <div style="padding:12px;background:var(--c-cream);border-radius:8px;margin-bottom:12px">${advice}</div>
-        ${firstErr?`<details style="margin-top:10px">
-          <summary style="cursor:pointer;color:var(--c-muted);font-size:12px">▸ 错误详情(技术信息)</summary>
-          <pre style="background:#1a1a1a;color:#0f0;padding:10px;border-radius:6px;font-size:11px;margin-top:8px;overflow-x:auto;white-space:pre-wrap;word-break:break-all">${escapeHtml(JSON.stringify(firstErr,null,2))}</pre>
+        ${firstErr || (r.errors && r.errors.length)?`<details open style="margin-top:10px">
+          <summary style="cursor:pointer;color:var(--c-primary);font-weight:600;font-size:13px">▼ 错误详情(技术信息,截图发开发者)</summary>
+          <pre style="background:#1a1a1a;color:#0f0;padding:10px;border-radius:6px;font-size:11px;margin-top:8px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto">${escapeHtml(JSON.stringify({firstError:firstErr, allErrors:(r.errors||[]).slice(0,10)},null,2))}</pre>
         </details>`:''}
         <div style="margin-top:14px;text-align:right">
           <button class="btn btn-outline btn-sm" data-action="cloud-show-sql">📋 查看建表 SQL</button>
@@ -9599,6 +10923,149 @@ const CloudModule = {
     Toast.success('已断开云端');
     Logger.log('cloud_disconnect','断开云端同步');
     this.refresh();
+  },
+
+  // 🆕 v10.7:测试宠物图片访问
+  async testPetImg(){
+    Toast.info('正在测试 15 张宠物图片...');
+    
+    const types = Object.keys(PET_TYPES);
+    const states = ['base','eat','sleep'];
+    const variants = ['hyphen','underscore','single','chinese-name'];
+    
+    // 第一轮:测主推荐命名 fox-base.png
+    const tests = [];
+    types.forEach(type=>{
+      states.forEach(state=>{
+        // 测最常见的 3 种命名
+        tests.push({
+          type, state,
+          urls: [
+            {name:`${type}-${state}.png`, url:`${PET_IMG_BASE}/${type}-${state}.png`},
+            {name:`${type}_${state}.png`, url:`${PET_IMG_BASE}/${type}_${state}.png`},
+            {name:`${type}.png`,           url:`${PET_IMG_BASE}/${type}.png`},
+          ]
+        });
+      });
+    });
+    
+    // 并行测试,每个 URL HEAD 一下
+    async function testUrl(url){
+      return new Promise(resolve=>{
+        const img = new Image();
+        const timer = setTimeout(()=>{img.src='';resolve(false)}, 5000);
+        img.onload = ()=>{clearTimeout(timer); resolve(true)};
+        img.onerror = ()=>{clearTimeout(timer); resolve(false)};
+        img.src = url;
+      });
+    }
+    
+    const results = {};
+    let total = 0, ok = 0;
+    
+    for(const t of tests){
+      const key = `${t.type}-${t.state}`;
+      results[key] = {hits:[]};
+      for(const u of t.urls){
+        total++;
+        const success = await testUrl(u.url);
+        if(success){
+          ok++;
+          results[key].hits.push(u.name);
+        }
+      }
+    }
+    
+    // 汇总:看哪种命名规则最成功
+    const naming = {hyphen:0, underscore:0, single:0};
+    Object.values(results).forEach(r=>{
+      r.hits.forEach(n=>{
+        if(n.includes('-')) naming.hyphen++;
+        else if(n.includes('_')) naming.underscore++;
+        else naming.single++;
+      });
+    });
+    
+    let report = '';
+    const recommend = naming.hyphen>=naming.underscore && naming.hyphen>=naming.single ? '横线 fox-base.png' :
+                       naming.underscore>=naming.single ? '下划线 fox_base.png' : '单文件 fox.png';
+    
+    Object.entries(results).forEach(([key, r])=>{
+      const status = r.hits.length>0 ? `<span style="color:#15803d">✅ ${r.hits.join(', ')}</span>` : `<span style="color:#dc2626">❌ 都失败</span>`;
+      report += `<div style="padding:4px 8px;border-bottom:1px solid #eee;font-size:12px"><strong>${key}</strong>: ${status}</div>`;
+    });
+    
+    Modal.open('🔍 宠物图片访问测试结果',`
+      <div style="line-height:1.7">
+        <div style="padding:12px;background:${ok>0?'#D4EDDA':'#FEE2E2'};border-radius:6px;margin-bottom:12px">
+          <div style="font-size:14px;font-weight:600;color:${ok>0?'#15803d':'#991b1b'}">
+            ${ok>0?'✅ 部分图片可访问':'❌ 所有图片都不可访问'}
+          </div>
+          <div style="font-size:12px;margin-top:6px">成功 ${ok}/${total} 张</div>
+          ${ok>0?`<div style="font-size:12px;margin-top:6px">📌 推荐命名规则:<strong>${recommend}</strong></div>`:''}
+        </div>
+        
+        ${ok===0?`<div style="padding:12px;background:#FEF3C7;border-radius:6px;margin-bottom:12px">
+          <div style="font-weight:600;color:#92400e;margin-bottom:6px">💡 全部失败的可能原因</div>
+          <div style="font-size:13px;line-height:1.7">
+            1. <strong>GitHub 仓库还没有 pet-images 文件夹</strong> → 您要上传图片<br>
+            2. <strong>仓库是私有的</strong> → raw URL 无法访问,需改公开 / 用图床<br>
+            3. <strong>文件名跟所有候选都不一样</strong> → 用【⚙️ 改图床 URL】配合您自己的命名<br>
+            4. <strong>网络问题</strong> → GitHub 在国内访问慢,可考虑用国内图床
+          </div>
+        </div>`:''}
+        
+        <details ${ok>0?'':'open'} style="margin-bottom:10px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--c-primary)">▸ 详细测试结果(45 次访问)</summary>
+          <div style="max-height:400px;overflow-y:auto;border:1px solid var(--c-border);border-radius:4px;margin-top:8px">
+            ${report}
+          </div>
+        </details>
+        
+        <div style="font-size:11px;color:var(--c-muted);margin-top:8px">
+          当前 URL 前缀:<code>${escapeHtml(PET_IMG_BASE)}</code>
+        </div>
+      </div>
+    `, null);
+  },
+  
+  // 🆕 v10.7:改图床 URL 前缀
+  setPetBase(){
+    const current = PET_IMG_BASE;
+    Modal.open('⚙️ 设置宠物图床 URL 前缀',`
+      <div style="line-height:1.7">
+        <div style="padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;margin-bottom:12px;line-height:1.6">
+          这是图片 URL 的前缀,后面会自动拼 <code>/fox-base.png</code> 等文件名。<br>
+          常见图床示例:<br>
+          • GitHub Pages: <code>https://luyanyu2008.github.io/yunjinyeji/pet-images</code><br>
+          • GitHub Raw: <code>https://raw.githubusercontent.com/luyanyu2008/yunjinyeji/main/pet-images</code><br>
+          • 七牛云: <code>https://cdn.your-domain.com/pets</code><br>
+          • 阿里云 OSS: <code>https://your-bucket.oss-cn-hangzhou.aliyuncs.com/pets</code><br>
+          ⚠️ <strong>不要</strong>在末尾加 <code>/</code>
+        </div>
+        <div class="form-item">
+          <label class="form-label">新的图床 URL 前缀</label>
+          <input class="form-input" id="petBaseInput" value="${escapeHtml(current)}" placeholder="https://...">
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--c-muted)">
+          💡 保存后刷新页面生效。改回默认请清空输入框
+        </div>
+      </div>
+    `, ()=>{
+      const newBase = $('#petBaseInput').value.trim().replace(/\/+$/,'');
+      if(!newBase){
+        localStorage.removeItem('yj_pet_img_base');
+        Toast.success('✅ 已恢复默认图床(刷新页面生效)');
+      }else{
+        if(!/^https?:\/\//.test(newBase)){
+          Toast.error('URL 必须以 http:// 或 https:// 开头');
+          return false;
+        }
+        localStorage.setItem('yj_pet_img_base', newBase);
+        Toast.success('✅ 已保存,刷新页面生效');
+      }
+      setTimeout(()=>location.reload(), 1500);
+    });
   },
 
   showSQL(){
@@ -9931,6 +11398,29 @@ const DataFixModule = {
         }
       </div>
 
+      <!-- 🆕 v10.5 店长手动设置迟到/早退 -->
+      <div class="card" style="margin-top:14px;background:#FEF3C7;border:1px solid #f59e0b">
+        <div class="card-title">⏱ 手动设置某天的迟到/早退</div>
+        <div style="font-size:12px;color:var(--c-muted);margin-bottom:10px">员工忘签到、或确实迟到了但没记录,店长可手动录入或修改某天的迟到/早退分钟数</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <select class="form-select" id="dfxLateUser" style="font-size:13px">
+            <option value="">(选择员工)</option>
+            ${allUsers.filter(u=>u.active && u.role!=='admin').map(u=>`<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('')}
+          </select>
+          <input type="date" class="form-input" id="dfxLateDate" value="${today()}" max="${today()}" style="font-size:13px">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <input type="number" class="form-input" id="dfxLateMin" placeholder="迟到 (分钟)" min="0" max="600" step="1" style="font-size:13px">
+          <input type="number" class="form-input" id="dfxEarlyMin" placeholder="早退 (分钟)" min="0" max="600" step="1" style="font-size:13px">
+        </div>
+        <button class="btn btn-primary btn-sm" data-action="datafix-set-late">⏱ 保存(写入考勤+业绩)</button>
+        <div style="margin-top:8px;font-size:11px;color:var(--c-ink-2);line-height:1.6">
+          💡 同时写入 <strong>考勤记录</strong> 和 <strong>业绩单的迟早字段</strong>(两边都会扣)<br>
+          💡 留空 = 不修改,如只填迟到不填早退,早退保持原值<br>
+          💡 想清零 → 填 0
+        </div>
+      </div>
+      
       <!-- 3. 批量清零工具 -->
       <div class="card" style="margin-top:14px">
         <div class="card-title">🧹 批量清零迟到/早退</div>
@@ -10099,6 +11589,97 @@ const DataFixModule = {
   },
 
   // 批量清零某员工某月的迟到
+  // 🆕 v10.5:店长手动设置某天的迟到/早退分钟数(写入考勤 + 业绩)
+  async setLateValue(){
+    if(Auth.current.role!=='admin'){Toast.error('仅店长可使用');return}
+    const uid=$('#dfxLateUser').value;
+    const date=$('#dfxLateDate').value;
+    const lateInput=$('#dfxLateMin').value.trim();
+    const earlyInput=$('#dfxEarlyMin').value.trim();
+    
+    if(!uid){Toast.error('请选择员工');return}
+    if(!date){Toast.error('请选择日期');return}
+    if(lateInput===''&&earlyInput===''){Toast.error('请至少填一个数值(留空两个 = 不变)');return}
+    
+    const u=await DataStore.get('users',uid);
+    if(!u){Toast.error('员工不存在');return}
+    
+    const lateMin=lateInput===''?null:Math.max(0,parseInt(lateInput)||0);
+    const earlyMin=earlyInput===''?null:Math.max(0,parseInt(earlyInput)||0);
+    
+    Modal.open(`⏱ 确认设置迟到/早退`,`
+      <div style="line-height:1.85">
+        <div style="padding:14px;background:#FEF3C7;border-radius:6px">
+          <div style="font-weight:700;font-size:14px;color:#b45309">${escapeHtml(u.name)} · ${date}</div>
+          <div style="margin-top:8px;font-size:13px">
+            ${lateMin!==null?`• 迟到设为:<strong>${lateMin} 分钟</strong>`:'• 迟到:不变'}<br>
+            ${earlyMin!==null?`• 早退设为:<strong>${earlyMin} 分钟</strong>`:'• 早退:不变'}
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:var(--c-ink-2);line-height:1.7">
+            ✅ 同时写入 <strong>考勤记录</strong>(yj_attendance)<br>
+            ✅ 同时写入 <strong>业绩单</strong>(yj_performance,如该日有业绩)<br>
+            ✅ 操作日志会留痕
+          </div>
+        </div>
+      </div>
+    `,async()=>{
+      try{
+        let modCount=0;
+        // 1. 找/建考勤记录
+        const allAtt=await DataStore.all('attendance');
+        let attRec=allAtt.find(r=>r.userId===uid && r.date===date);
+        if(attRec){
+          if(lateMin!==null)attRec.lateMinutes=lateMin;
+          if(earlyMin!==null)attRec.earlyMinutes=earlyMin;
+          attRec.status=(attRec.lateMinutes||0)>0?'late':((attRec.earlyMinutes||0)>0?'early':'normal');
+          attRec.updatedAt=Date.now();
+          await DataStore.put('attendance',attRec);
+          modCount++;
+        }else{
+          // 没考勤就新建一条
+          const newRec={
+            id:uuid(),
+            userId:uid,
+            date:date,
+            lateMinutes:lateMin||0,
+            earlyMinutes:earlyMin||0,
+            overtimeHours:0,
+            status:(lateMin||0)>0?'late':((earlyMin||0)>0?'early':'normal'),
+            note:`店长 ${Auth.current.name} 手动登记`,
+            createdAt:Date.now(),
+            updatedAt:Date.now(),
+            createdByAdmin:Auth.current.id
+          };
+          await DataStore.put('attendance',newRec);
+          modCount++;
+        }
+        
+        // 2. 找业绩记录(可能多条),同步迟早字段
+        const allPerf=await DataStore.all('performance');
+        const perfRecs=allPerf.filter(r=>r.userId===uid && r.date===date);
+        for(const pr of perfRecs){
+          if(lateMin!==null)pr.lateMinutes=lateMin;
+          if(earlyMin!==null)pr.earlyMinutes=earlyMin;
+          pr.updatedAt=Date.now();
+          await DataStore.put('performance',pr);
+          modCount++;
+        }
+        
+        Logger.log('admin_set_late',`手动设置 ${u.name} ${date} 迟到=${lateMin??'-'} 早退=${earlyMin??'-'}(影响 ${modCount} 条)`);
+        Toast.success(`✅ 已更新 ${modCount} 条记录`);
+        
+        // 清空输入框
+        $('#dfxLateMin').value='';
+        $('#dfxEarlyMin').value='';
+        this.refresh();
+      }catch(e){
+        Toast.error('操作失败:'+e.message);
+        console.error('[DataFix] setLateValue:',e);
+        return false;
+      }
+    });
+  },
+
   async batchClear(){
     const uid=$('#dfxUser').value;
     const month=$('#dfxMonth').value;
@@ -10346,7 +11927,7 @@ const OverallModule = {
     const month=currentMonth();
     const rows=users.map(u=>{
       const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
-      const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
+      const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries,csReports);
       return{u,s};
     }).sort((a,b)=>b.s.totalPerf-a.s.totalPerf);
 
@@ -10487,7 +12068,7 @@ const ExportModule = {
     const rows=[['员工','岗位','本月业绩','完成率','底薪','全勤奖','岗位工资','超额提成','加班费','好评奖','迟到扣款','请假扣款','应发','扣款','实发薪资']];
     users.forEach(u=>{
       const userWithCs={...u,_csReports:csReports.filter(r=>r.userId===u.id && isSameMonth(r.bookingDate,month)),_sopRecords:sopAll.filter(r=>r.userId===u.id && r.date && r.date.startsWith(month))};
-      const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries);
+      const s=Calc.calcMonthSalary(userWithCs,perf,att,leaves,month,summaries,csReports);
       if(s.kind==='intern'){
         rows.push([u.name,s.level.name,s.totalPerf,'-',`补助¥${s.allowance}(${s.attendDays}天)`,'-','-','-',
           s.overtimePay,s.reviewReward,'-','-',s.gross,0,s.net]);
@@ -10629,6 +12210,7 @@ document.addEventListener('click',async e=>{
     'add-rev-img':()=>PerfModule.uploadReviewImage(i),
     'rm-rev-img':()=>PerfModule.removeReviewImage(i,idx),
     'view-perf':()=>PerfListModule.viewDetail(id),
+    'edit-perf-admin':()=>PerfListModule.editAdmin(id),
     'del-perf':()=>PerfListModule.delete(id),
     'perf-clear-all':()=>PerfListModule.clearAll(),
     'approve':()=>LeaveModule.approve(id),
@@ -10643,6 +12225,7 @@ document.addEventListener('click',async e=>{
     'datafix-clear-late-att':()=>DataFixModule.clearLateAtt(id),
     'datafix-clear-late-perf':()=>DataFixModule.clearLatePerf(id),
     'datafix-batch-clear':()=>DataFixModule.batchClear(),
+    'datafix-set-late':()=>DataFixModule.setLateValue(),
     'datafix-add-perf':()=>DataFixModule.adminAddPerf(),
     // 🆕 v10.2 全员薪资 → 个人详情
     'ts-view-detail':()=>TotalSalaryModule.viewEmployeeDetail(id, t.dataset.month),
@@ -10679,6 +12262,13 @@ document.addEventListener('click',async e=>{
     'save-cs-report':()=>CustomerServiceModule.save(),
     'cloud-test':()=>CloudModule.test(),
     'cloud-diagnostic':()=>CloudModule.runDiagnostic(),
+    'cloud-reset-lock':()=>{
+      CloudSync._releaseSyncLock();
+      Toast.success('✅ 同步锁已重置,可以重新同步');
+      CloudModule.refresh();
+    },
+    'cloud-test-pet-img':()=>CloudModule.testPetImg(),
+    'cloud-set-pet-base':()=>CloudModule.setPetBase(),
     'cloud-pull':()=>CloudModule.pull(),
     'cloud-push':()=>CloudModule.push(),
     'cloud-flush':()=>CloudModule.flush(),
@@ -10713,6 +12303,11 @@ document.addEventListener('click',async e=>{
     'complaints-filter':()=>ComplaintModule.applyFilters(),
     'complaints-export':()=>ComplaintModule.exportCsv(),
     'complaints-edit':()=>ComplaintModule.openComplaint(id, t.dataset.i),
+    // 🆕 v10.6 客诉渠道切换 + 独立登记
+    'complaints-channel':()=>ComplaintModule.switchChannel(t.dataset.key),
+    'complaints-add-standalone':()=>ComplaintModule.addStandalone(),
+    // 🆕 v10.6 复盘学习库
+    'reflection-channel':()=>ReflectionModule.switchChannel(t.dataset.key),
     // 🆕 v7 SOP(由 change 事件触发,这里仅占位避免 'unknown action')
     'sop-toggle':()=>{ /* handled by change event */ },
     // 🆕 v9 PET 系统
@@ -11014,6 +12609,13 @@ window.TotalSalaryModule=TotalSalaryModule;
 window.CloudModule=CloudModule;
 window.CloudSync=CloudSync;
 window.AICoach=AICoach;
+window.ComplaintModule=ComplaintModule;
+window.ReflectionModule=ReflectionModule;
+window.OrderModule=typeof OrderModule!=='undefined'?OrderModule:undefined;
+window.SOPModule=typeof SOPModule!=='undefined'?SOPModule:undefined;
+window.PetModule=typeof PetModule!=='undefined'?PetModule:undefined;
+window.PetSystem=typeof PetSystem!=='undefined'?PetSystem:undefined;
+window.DataFixModule=typeof DataFixModule!=='undefined'?DataFixModule:undefined;
 
 </script>
 </body>
