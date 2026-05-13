@@ -1525,38 +1525,96 @@ const PET_IMG_BASE_DEFAULT = 'https://free.picui.cn/free/2026/05/11';
 const PET_IMG_BASE = (typeof localStorage!=='undefined' && localStorage.getItem('yj_pet_img_base')) || PET_IMG_BASE_DEFAULT;
 
 // 🎨 5 种古风萌宠 — 完整 URL 直接绑定(2026-05-11 用户上传)
-const PET_TYPES = {
+// 🔧 v10.10 修正:根据用户截图反推图片实际内容
+// 截图证据:
+//   - 顺序 1(1d119)显示在"灵狐"位置 → 实际是猫
+//   - 顺序 4(1c37b)显示在"玉兔"位置 → 实际是狐狸
+//   - 顺序 7(27b27)显示在"星辰鹿"位置 → 实际是兔子
+//   - 顺序 10(31c84)显示在"空灵猫"位置 → 实际是猫(蜷缩状)
+//   - 顺序 12(04514)显示在"云鹤"位置 → 实际是猫(跑动)
+// 推断:URL 池前 9 张是 猫/狐/兔 × base/eat/sleep,后 6 张是 鹿/鹤(可能)
+// 但因为猫有 3+ 张图,逻辑混乱 — 推荐店长进【宠物图片映射】手动重配
+// 默认配置(店长可在【☁️ 云端同步 → 🎨 宠物图片映射】里调整)
+const PET_TYPES_DEFAULT = {
+  // 灵狐:从池中第 4-6 张(根据截图,4 号是狐狸)
   fox:    {name:'灵狐', emoji:'🦊', desc:'机灵狡黠,九尾流光',
            img:{
-             base:  'https://free.picui.cn/free/2026/05/11/6a016dbb1d119.png',
-             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbb1d166.png',
-             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbb277fb.png'
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbb1c37b.png',  // #4 狐狸 base
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbb1c57c.png',  // #5 推测狐狸 eat
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbd0e0e9.png'   // #6 推测狐狸 sleep
            }},
+  // 玉兔:从池中第 7-9 张(根据截图,7 号是兔子)
   rabbit: {name:'玉兔', emoji:'🐰', desc:'冰雪聪明,广寒仙气',
            img:{
-             base:  'https://free.picui.cn/free/2026/05/11/6a016dbb1c37b.png',
-             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbb1c57c.png',
-             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbd0e0e9.png'
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbd27b27.png',  // #7 兔子 base
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbd33102.png',  // #8 推测兔子 eat
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbd3479e.png'   // #9 推测兔子 sleep
            }},
+  // 星辰鹿:从池中第 13-15 张(推测后段是鹿/鹤)
   deer:   {name:'星辰鹿', emoji:'🦌', desc:'温润如玉,星河角生',
            img:{
-             base:  'https://free.picui.cn/free/2026/05/11/6a016dbd27b27.png',
-             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbd33102.png',
-             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbd3479e.png'
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbf1611c.png',  // #13 推测鹿 base
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbf1ee82.png',  // #14 推测鹿 eat
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbf1b816.png'   // #15 推测鹿 sleep
            }},
+  // 空灵猫:从池中第 1-3 张(根据截图,1 号是猫)
   cat:    {name:'空灵猫', emoji:'🐱', desc:'灵性十足,踏雪寻梅',
            img:{
-             base:  'https://free.picui.cn/free/2026/05/11/6a016dbd31c84.png',
-             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbee6870.png',
-             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbf04514.png'
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbb1d119.png',  // #1 猫 base
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbb1d166.png',  // #2 推测猫 eat
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbb277fb.png'   // #3 推测猫 sleep
            }},
+  // 云鹤:从池中第 10-12 张(根据截图,10/12 显示是猫;可能没有鹤的图)
+  // 默认绑定这 3 张,店长进配置面板可重映射
   crane:  {name:'云鹤', emoji:'🦢', desc:'仙气飘渺,云端起舞',
            img:{
-             base:  'https://free.picui.cn/free/2026/05/11/6a016dbf1611c.png',
-             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbf1ee82.png',
-             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbf1b816.png'
+             base:  'https://free.picui.cn/free/2026/05/11/6a016dbd31c84.png',  // #10
+             eat:   'https://free.picui.cn/free/2026/05/11/6a016dbee6870.png',  // #11
+             sleep: 'https://free.picui.cn/free/2026/05/11/6a016dbf04514.png'   // #12
            }}
 };
+
+// 🆕 v10.9 所有可用的图片 URL 池(15 张图,可重新映射)
+const PET_IMG_POOL = [
+  'https://free.picui.cn/free/2026/05/11/6a016dbb1d119.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbb1d166.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbb277fb.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbb1c37b.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbb1c57c.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbd0e0e9.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbd27b27.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbd33102.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbd3479e.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbd31c84.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbee6870.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbf04514.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbf1611c.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbf1ee82.png',
+  'https://free.picui.cn/free/2026/05/11/6a016dbf1b816.png'
+];
+
+// 🆕 v10.9 加载 PET_TYPES(支持 localStorage 覆盖)
+function loadPetTypes(){
+  try{
+    const saved=localStorage.getItem('yj_pet_mapping');
+    if(saved){
+      const mapping=JSON.parse(saved);
+      // 深拷贝默认配置,然后用保存的映射覆盖 img 字段
+      const result=JSON.parse(JSON.stringify(PET_TYPES_DEFAULT));
+      Object.keys(mapping).forEach(k=>{
+        if(result[k] && mapping[k]){
+          if(mapping[k].base)result[k].img.base=mapping[k].base;
+          if(mapping[k].eat)result[k].img.eat=mapping[k].eat;
+          if(mapping[k].sleep)result[k].img.sleep=mapping[k].sleep;
+        }
+      });
+      return result;
+    }
+  }catch(e){console.warn('[Pet] 读取映射配置失败',e)}
+  return PET_TYPES_DEFAULT;
+}
+
+const PET_TYPES = loadPetTypes();
 
 // 🆕 v10.7 渲染宠物形象(智能探测多种命名规则,任何一个成功就用)
 // 状态对应:base=普通 / eat=吃东西(开心) / sleep=萎靡/休息(饿了)
@@ -1574,18 +1632,23 @@ function renderPetVisual(type, state, size){
   
   // 优先用指定状态的图,没有则回退 base
   const url = (t.img && t.img[stateKey]) || (t.img && t.img.base);
+  
+  // 🆕 v10.11:精美的 emoji 兜底(圆形渐变背景 + 阴影 + 光晕)
+  const emojiFallback = `<span style="display:inline-flex;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;font-size:${Math.round(sz*0.6)}px;line-height:1;background:radial-gradient(circle at 30% 30%,#FFE4B5 0%,#FFD580 50%,#FFB347 100%);border-radius:50%;box-shadow:0 4px 12px rgba(255,165,80,0.4),inset 0 -3px 6px rgba(0,0,0,0.08),inset 0 3px 6px rgba(255,255,255,0.5);filter:drop-shadow(0 2px 4px rgba(0,0,0,0.1))">${t.emoji}</span>`;
+  
   if(!url){
-    return `<span style="font-size:${Math.round(sz*0.85)}px;line-height:1">${t.emoji}</span>`;
+    return emojiFallback;
   }
   
-  // 图片加载失败时,onerror 回退到 emoji
+  // 图片加载失败时,onerror 回退到精美 emoji
+  const emojiFallbackEscaped = emojiFallback.replace(/"/g,'&quot;');
   return `<span class="pet-visual" style="display:inline-block;width:${sz}px;height:${sz}px;text-align:center;vertical-align:middle;line-height:1">
     <img src="${url}" 
          alt="${t.name}" 
-         data-fallback="${t.emoji}"
+         data-fallback="${emojiFallbackEscaped}"
          data-size="${sz}"
          style="width:100%;height:100%;object-fit:contain;vertical-align:middle"
-         onerror="if(!this.dataset.fbDone){this.dataset.fbDone='1';this.outerHTML='<span style=&quot;font-size:'+Math.round(this.dataset.size*0.85)+'px;line-height:1&quot;>'+this.dataset.fallback+'</span>'}"
+         onerror="if(!this.dataset.fbDone){this.dataset.fbDone='1';this.outerHTML=this.dataset.fallback}"
          loading="lazy">
   </span>`;
 }
@@ -1770,6 +1833,36 @@ const V10_THEME_CSS = `
   font-size:128px;line-height:1.2;
   filter:drop-shadow(0 4px 12px rgba(196,168,107,0.4));
   animation:pet-float 3s ease-in-out infinite;
+}
+/* 🆕 v10.11:图片版宠物的精致样式(光晕+精美外框) */
+.pet-emoji-big .pet-visual{
+  position:relative;
+  display:inline-block;
+}
+.pet-emoji-big .pet-visual::before{
+  content:'';position:absolute;
+  top:-8%;left:-8%;right:-8%;bottom:-8%;
+  background:radial-gradient(ellipse at center,
+    rgba(255,215,128,0.5) 0%,
+    rgba(255,200,120,0.25) 30%,
+    transparent 65%);
+  border-radius:50%;
+  z-index:-1;
+  animation:pet-glow 4s ease-in-out infinite;
+}
+.pet-emoji-big .pet-visual img{
+  filter:drop-shadow(0 6px 16px rgba(196,140,80,0.45)) 
+         drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+  transition:filter 0.3s ease;
+}
+.pet-emoji-big:hover .pet-visual img{
+  filter:drop-shadow(0 8px 20px rgba(255,180,80,0.6))
+         drop-shadow(0 0 8px rgba(255,220,140,0.5))
+         brightness(1.05);
+}
+@keyframes pet-glow{
+  0%,100%{opacity:0.6;transform:scale(1)}
+  50%{opacity:0.85;transform:scale(1.05)}
 }
 @keyframes pet-float{
   0%,100%{transform:translateY(0)}
@@ -3051,6 +3144,21 @@ const CloudSync = {
       this.status='online';
       this.lastSync=Date.now();
       localStorage.setItem('yj_last_sync',String(this.lastSync));
+      
+      // 🆕 v10.11:从拉取的 settings 表里取宠物映射,写入 localStorage(多设备同步)
+      try{
+        const petMapSetting = await DataStore.get('settings','pet_mapping');
+        if(petMapSetting && petMapSetting.value){
+          const cloudMapping = JSON.stringify(petMapSetting.value);
+          const localMapping = localStorage.getItem('yj_pet_mapping');
+          if(cloudMapping !== localMapping){
+            localStorage.setItem('yj_pet_mapping', cloudMapping);
+            console.log('[Pet] 从云端同步了宠物映射配置');
+            Bus.emit('pet_mapping:updated');
+          }
+        }
+      }catch(e){console.warn('[Pet] 同步宠物映射失败',e)}
+      
       Bus.emit('cloud:status',this.status);
       Bus.emit('cloud:pulled',total);
       return {ok:true,count:total};
@@ -3765,6 +3873,28 @@ const HomeModule = {
       </div>
       ${clockHint}
     </div>`;
+    
+    // 🆕 v10.10:店长首次未配宠物图片映射时,加显眼提醒
+    if(Auth.current?.role==='admin' && !localStorage.getItem('yj_pet_mapping') && !localStorage.getItem('yj_pet_mapping_dismissed')){
+      const tip=document.createElement('div');
+      tip.className='card';
+      tip.style.cssText='margin-bottom:14px;background:linear-gradient(135deg,#FEF3C7,#FAF0E6);border-left:4px solid #F59E0B;padding:12px 14px';
+      tip.innerHTML=`
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div style="flex:1;min-width:200px">
+            <div style="font-size:13px;font-weight:600;color:#92400e">🎨 宠物图片可能错位,建议立即配置</div>
+            <div style="font-size:11px;color:var(--c-ink-2);margin-top:4px;line-height:1.6">
+              由于图床上传顺序与代码默认假设不一致,部分宠物名字 ≠ 显示的图。<br>
+              点【配置映射】打开可视化界面,看图选名字,5 分钟搞定。
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" onclick="Router.go('cloud');setTimeout(()=>{CloudModule.showPetMapping&&CloudModule.showPetMapping()},500)" style="font-size:11px;padding:4px 10px">🎨 配置映射</button>
+            <button class="btn btn-sm btn-ghost" onclick="localStorage.setItem('yj_pet_mapping_dismissed','1');this.closest('.card').remove()" style="font-size:11px;padding:4px 10px;color:var(--c-muted)">暂不提醒</button>
+          </div>
+        </div>`;
+      bar.appendChild(tip);
+    }
   },
   
   async _quickPush(){
@@ -9825,12 +9955,12 @@ const PetModule = {
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
           ${Object.entries(PET_TYPES).map(([k,v])=>`
-            <div style="padding:14px;background:var(--c-cream);border:2px solid transparent;border-radius:10px;cursor:pointer" 
+            <div style="padding:14px;background:linear-gradient(180deg,#FFF8E7 0%,#FFEFD6 100%);border:2px solid transparent;border-radius:10px;cursor:pointer;text-align:center;transition:all .3s" 
                  data-action="pet-choose" data-type="${k}"
-                 onmouseover="this.style.borderColor='var(--c-gold)'" 
-                 onmouseout="this.style.borderColor='transparent'">
-              <div>${renderPetVisual(k, "base", 80)}</div>
-              <div style="font-weight:700;margin-top:6px;color:var(--c-primary)">${v.name}</div>
+                 onmouseover="this.style.borderColor='var(--c-gold)';this.style.transform='translateY(-4px)';this.style.boxShadow='0 8px 16px rgba(196,140,80,0.2)'" 
+                 onmouseout="this.style.borderColor='transparent';this.style.transform='translateY(0)';this.style.boxShadow='none'">
+              <div style="filter:drop-shadow(0 4px 8px rgba(196,140,80,0.3))">${renderPetVisual(k, "base", 90)}</div>
+              <div style="font-weight:700;margin-top:8px;color:var(--c-primary);font-size:15px">${v.name}</div>
               <div style="font-size:11px;color:var(--c-muted);margin-top:4px">${v.desc}</div>
             </div>
           `).join('')}
@@ -9867,12 +9997,12 @@ const PetModule = {
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px">
           ${choices.map(([k,v])=>`
-            <div style="padding:14px;background:var(--c-cream);border:2px solid transparent;border-radius:10px;cursor:pointer;transition:all .2s" 
+            <div style="padding:14px;background:linear-gradient(180deg,#FFF8E7 0%,#FFEFD6 100%);border:2px solid transparent;border-radius:10px;cursor:pointer;text-align:center;transition:all .3s" 
                  data-action="pet-do-change" data-type="${k}"
-                 onmouseover="this.style.borderColor='var(--c-gold)';this.style.transform='scale(1.05)'" 
-                 onmouseout="this.style.borderColor='transparent';this.style.transform='scale(1)'">
-              <div>${renderPetVisual(k, "base", 80)}</div>
-              <div style="font-weight:700;margin-top:6px;color:var(--c-primary)">${v.name}</div>
+                 onmouseover="this.style.borderColor='var(--c-gold)';this.style.transform='translateY(-4px) scale(1.03)';this.style.boxShadow='0 8px 16px rgba(196,140,80,0.2)'" 
+                 onmouseout="this.style.borderColor='transparent';this.style.transform='translateY(0) scale(1)';this.style.boxShadow='none'">
+              <div style="filter:drop-shadow(0 4px 8px rgba(196,140,80,0.3))">${renderPetVisual(k, "base", 90)}</div>
+              <div style="font-weight:700;margin-top:8px;color:var(--c-primary);font-size:15px">${v.name}</div>
               <div style="font-size:11px;color:var(--c-muted);margin-top:4px">${v.desc}</div>
             </div>
           `).join('')}
@@ -10504,19 +10634,22 @@ const CloudModule = {
           ${CloudSync.syncing?`<button class="btn btn-outline btn-sm" data-action="cloud-reset-lock" style="width:100%;margin-top:6px;color:var(--c-danger);border-color:var(--c-danger)">🔓 强制重置同步锁(同步卡死时点)</button>`:''}
         </div>`:''}
         
-        <!-- 🆕 v10.7:宠物图片调试工具 -->
+        <!-- 🆕 v10.9:宠物图片映射工具(最重要,放最显眼位置) -->
         <div style="margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#FFF8DC,#FAF0E6);border-radius:8px;border:2px solid #F59E0B">
-          <div style="font-weight:600;color:#92400e;margin-bottom:6px">🎨 宠物图片调试</div>
-          <div style="font-size:12px;color:var(--c-ink-2);margin-bottom:8px;line-height:1.6">
-            如果宠物显示的是 emoji 而不是图片,可能是仓库里的文件名跟代码不一致。<br>
-            当前图床 URL:<br>
-            <code style="display:block;background:#fff;padding:6px;border-radius:4px;font-size:11px;word-break:break-all;margin-top:4px">${escapeHtml(PET_IMG_BASE)}</code>
-            智能探测会按顺序尝试:fox-base.png → fox_base.png → fox.png → 灵狐.png<br>
-            点【🔍 测试图片访问】会一次性试 5 种命名,告诉您哪些能加载
+          <div style="font-weight:600;color:#92400e;margin-bottom:6px">🎨 宠物图片映射(店长可视化配置)</div>
+          <div style="font-size:12px;color:var(--c-ink-2);margin-bottom:8px;line-height:1.7">
+            ⭐ <strong>图片和宠物名字不对应?</strong>点【🎨 配置图片映射】打开可视化配置界面:<br>
+            • 显示 15 张实际图片<br>
+            • 每张图下拉选择"这是哪只宠物的哪个状态"<br>
+            • 保存后立刻生效,以后换图也不用找开发<br>
+            <br>
+            <strong>状态说明</strong>:base=普通 / eat=开心吃食 / sleep=萎靡休息<br>
+            ${localStorage.getItem('yj_pet_mapping')?'<span style="color:#15803d">✅ 已使用自定义映射</span>':'<span style="color:#b45309">📍 当前使用默认映射(可能与图不对应)</span>'}
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn btn-sm btn-primary" data-action="cloud-test-pet-img" style="flex:1;font-size:12px">🔍 测试图片访问</button>
-            <button class="btn btn-sm btn-outline" data-action="cloud-set-pet-base" style="flex:1;font-size:12px">⚙️ 改图床 URL</button>
+            <button class="btn btn-sm btn-primary" data-action="cloud-pet-mapping" style="flex:2;font-size:13px">🎨 配置图片映射</button>
+            <button class="btn btn-sm btn-outline" data-action="cloud-test-pet-img" style="flex:1;font-size:12px">🔍 测试访问</button>
+            <button class="btn btn-sm btn-ghost" data-action="cloud-set-pet-base" style="flex:1;font-size:12px">⚙️ 改图床</button>
           </div>
         </div>
         ${cfg?`<div style="margin-bottom:12px;padding:12px;background:linear-gradient(135deg,#E0F2FE,#F0F9FF);border-radius:8px;border:2px solid #3b82f6">
@@ -10669,6 +10802,52 @@ const CloudModule = {
       'Content-Type':'application/json'
     };
     
+    // 🆕 v10.11:Step 1.5 — 先快速 ping URL 是否能连通(用 HEAD 请求 + 短超时)
+    log('【1.5/6】快速测试 URL 连通性...','title');
+    log('PING '+cfg.url);
+    try{
+      const ctrl=new AbortController();
+      const timer=setTimeout(()=>ctrl.abort(),5000);
+      const pingRes=await fetch(cfg.url+'/rest/v1/',{
+        method:'HEAD',
+        headers:{'apikey':cfg.anonKey},
+        signal:ctrl.signal
+      });
+      clearTimeout(timer);
+      log(`✓ URL 可达 (HTTP ${pingRes.status})`,'ok');
+      // 检查响应头里是否有 supabase 特征
+      const serverHeader=pingRes.headers.get('server')||'';
+      const sbVersion=pingRes.headers.get('x-supabase-api-version')||pingRes.headers.get('content-profile')||'';
+      if(serverHeader || sbVersion){
+        log(`✓ 服务器特征: ${serverHeader} ${sbVersion}`,'ok');
+      }
+    }catch(e){
+      log(`❌ URL 不可达: ${e.message}`,'err');
+      log('','');
+      if(e.name==='AbortError'){
+        log('🔍 URL 5 秒内无响应,可能原因:','warn');
+        log('  ① Supabase 项目暂停(免费版 7 天无活动自动暂停)','warn');
+        log('     → 登录 supabase.com 唤醒项目','warn');
+        log('  ② 项目已删除或 URL 拼写错误','warn');
+        log(`     → 当前 URL: ${cfg.url}`,'warn');
+        log('     → 请到 Supabase Dashboard 复制正确的 Project URL','warn');
+      }else if(e.message.includes('Failed to fetch')||e.message.includes('NetworkError')){
+        log('🔍 浏览器无法连接到这个 URL,可能原因:','warn');
+        log('  ① URL 拼写错误(项目名/域名不对)','warn');
+        log(`     → 在浏览器地址栏直接打开:${cfg.url}`,'warn');
+        log('       如果是 "DNS 错误" → 项目名错了','warn');
+        log('       如果是 "无法访问" → 项目暂停了','warn');
+        log('  ② 网络/防火墙拦截','warn');
+        log('     → 试切换到手机 4G 网络','warn');
+        log('  ③ 双击 HTML 打开(file://)导致 CORS','warn');
+        log('     → 部署到 GitHub Pages 或用本地服务器','warn');
+      }
+      log('','');
+      log('🛑 后续测试已跳过,先解决 URL 连通问题','err');
+      return;
+    }
+    log('');
+    
     // 测试 1: GET yj_users
     log('【2/6】测试 yj_users 表 GET 请求...','title');
     const url1=cfg.url+'/rest/v1/yj_users?limit=1';
@@ -10689,7 +10868,14 @@ const CloudModule = {
       }
     }catch(e){
       log('❌ 网络错误: '+e.message,'err');
-      log('→ 检查 URL 和网络','warn');
+      log('','');
+      log('💡 最可能的 3 个原因(按概率排序):','warn');
+      log('  ① Supabase 项目被暂停(免费版 7 天无活动自动暂停)','warn');
+      log('     → 登录 supabase.com 找到项目 → 点 Resume 唤醒','warn');
+      log('  ② 网络/防火墙拦截了 supabase.co','warn');
+      log('     → 试手机 4G,或在浏览器直接打开 URL 测试','warn');
+      log('  ③ 双击 HTML 打开导致 CORS 拦截','warn');
+      log('     → 部署到 GitHub Pages 或 Netlify','warn');
       return;
     }
     log('');
@@ -10875,12 +11061,42 @@ const CloudModule = {
         <strong>彻底重做</strong>(数据多时谨慎):<br>
         在 Supabase 删除所有 yj_* 表 → 重新执行【📋 查看建表 SQL】(本地数据不丢)`;
     }else if(lowerMsg.includes('cors')||lowerMsg.includes('failed to fetch')||lowerMsg.includes('network')){
-      diagnosis='🌐 网络连接异常';
-      advice=`<strong>原因</strong>:浏览器无法访问 Supabase 服务器。<br><br>
-        <strong>解决</strong>:<br>
-        • 检查网络是否正常<br>
-        • 如果是双击 HTML 打开(file://),请部署到 Netlify 或用本地服务器<br>
-        • Supabase 项目可能被暂停(免费版长期不用会暂停),进 Supabase 控制台唤醒`;
+      diagnosis='🌐 Failed to fetch — 浏览器无法访问 Supabase';
+      advice=`<strong>这是同步失败最常见的原因。按以下顺序排查(99% 能解决):</strong><br><br>
+        
+        <div style="padding:10px;background:#FEE2E2;border-radius:6px;margin-bottom:10px">
+          <strong style="color:#991b1b">🔴 最可能原因:Supabase 项目被暂停</strong><br>
+          免费版 Supabase 项目<strong> 7 天无活动会自动暂停</strong>,所有请求都报 Failed to fetch。<br>
+          <strong>解决</strong>:<br>
+          1. 打开 <code>https://supabase.com/dashboard</code> 登录<br>
+          2. 找到您的项目(URL 是 <code>udlqenyoomxmmdngarbv</code>)<br>
+          3. 如果项目卡片显示"Paused"或"Inactive" → 点 <strong>Resume / Restore</strong> 按钮<br>
+          4. 等 1-2 分钟项目恢复 → 回这里点【🔬 一键全链路诊断】
+        </div>
+        
+        <div style="padding:10px;background:#FEF3C7;border-radius:6px;margin-bottom:10px">
+          <strong style="color:#92400e">🟡 次可能:网络/防火墙拦截</strong><br>
+          • 门店 WiFi 可能屏蔽了 supabase.co → 试试手机 4G 网络<br>
+          • 在浏览器地址栏打开 <code>https://udlqenyoomxmmdngarbv.supabase.co</code> 看能否打开<br>
+          • 如果不能,说明是网络问题
+        </div>
+        
+        <div style="padding:10px;background:#E0F2FE;border-radius:6px;margin-bottom:10px">
+          <strong style="color:#1e40af">🔵 新版 Publishable Key 特别检查</strong><br>
+          您用的是 <code>sb_publishable_...</code>(新版 Key),需要确认:<br>
+          1. Supabase → Settings → API → 确认 anon/public key 是这个<br>
+          2. Authentication → Policies → 确保 yj_users 等表对 anon 角色有 SELECT/INSERT 权限<br>
+          3. 或在 SQL Editor 跑:<code>ALTER TABLE yj_users DISABLE ROW LEVEL SECURITY;</code>(临时,生产环境再开 RLS)
+        </div>
+        
+        <div style="padding:10px;background:#F3F4F6;border-radius:6px">
+          <strong>🟢 如果是双击 HTML 打开</strong><br>
+          浏览器对 file:// 有 CORS 限制 → 部署到 GitHub Pages / Netlify,或用 Live Server 启本地服务
+        </div>
+        
+        <div style="margin-top:10px;font-size:11px;color:var(--c-muted);text-align:center">
+          💡 修复后回到这里 → 重新点【⬆️ 全量推送】或【🔬 一键诊断】验证
+        </div>`;
     }else if(lowerMsg.includes('429')||lowerMsg.includes('rate limit')){
       diagnosis='⏱️ 请求频率过高';
       advice='稍等一分钟后再点【🔄 重试】';
@@ -10925,108 +11141,508 @@ const CloudModule = {
     this.refresh();
   },
 
-  // 🆕 v10.7:测试宠物图片访问
-  async testPetImg(){
-    Toast.info('正在测试 15 张宠物图片...');
+  // 🆕 v10.9:可视化宠物图片映射(店长一键配置 15 张图对应哪只宠物)
+  showPetMapping(){
+    if(Auth.current.role!=='admin'){Toast.error('仅店长可配置');return}
     
-    const types = Object.keys(PET_TYPES);
-    const states = ['base','eat','sleep'];
-    const variants = ['hyphen','underscore','single','chinese-name'];
+    // 读取当前映射(可能是默认,也可能是用户改过的)
+    const current=PET_TYPES;
     
-    // 第一轮:测主推荐命名 fox-base.png
-    const tests = [];
-    types.forEach(type=>{
-      states.forEach(state=>{
-        // 测最常见的 3 种命名
-        tests.push({
-          type, state,
-          urls: [
-            {name:`${type}-${state}.png`, url:`${PET_IMG_BASE}/${type}-${state}.png`},
-            {name:`${type}_${state}.png`, url:`${PET_IMG_BASE}/${type}_${state}.png`},
-            {name:`${type}.png`,           url:`${PET_IMG_BASE}/${type}.png`},
-          ]
-        });
+    // 收集"图片URL → 当前归属"的反向映射
+    const urlOwner={};
+    Object.keys(current).forEach(petKey=>{
+      const pet=current[petKey];
+      ['base','eat','sleep'].forEach(state=>{
+        const url=pet.img[state];
+        if(url)urlOwner[url]=`${pet.name}-${state}`;
       });
     });
     
-    // 并行测试,每个 URL HEAD 一下
-    async function testUrl(url){
-      return new Promise(resolve=>{
-        const img = new Image();
-        const timer = setTimeout(()=>{img.src='';resolve(false)}, 5000);
-        img.onload = ()=>{clearTimeout(timer); resolve(true)};
-        img.onerror = ()=>{clearTimeout(timer); resolve(false)};
-        img.src = url;
-      });
-    }
-    
-    const results = {};
-    let total = 0, ok = 0;
-    
-    for(const t of tests){
-      const key = `${t.type}-${t.state}`;
-      results[key] = {hits:[]};
-      for(const u of t.urls){
-        total++;
-        const success = await testUrl(u.url);
-        if(success){
-          ok++;
-          results[key].hits.push(u.name);
+    // 渲染 15 张图卡片(从池中取)
+    // 🆕 v10.12 重构:绿色标签只显示当前下拉框值,不显示"默认归属",避免混淆
+    const cardsHtml=PET_IMG_POOL.map((url,idx)=>{
+      const owner=urlOwner[url]||'';
+      // 把 owner(如 "灵狐-base")转成下拉框 value 格式(如 "fox:base")
+      let selectedVal='';
+      if(owner){
+        for(const [k,p] of Object.entries(current)){
+          ['base','eat','sleep'].forEach(state=>{
+            if(owner===p.name+'-'+state)selectedVal=k+':'+state;
+          });
         }
       }
-    }
+      
+      return `<div class="pet-img-card" style="border:2px solid var(--c-border);border-radius:8px;padding:10px;background:#fff" data-pet-card="${idx}">
+        <div style="text-align:center;margin-bottom:8px;position:relative">
+          <img src="${url}" 
+               style="width:140px;height:140px;object-fit:contain;background:#FAFAFA;border-radius:6px;cursor:zoom-in" 
+               onclick="window.open('${url}','_blank')"
+               title="点击在新窗口打开大图"
+               onerror="this.outerHTML='<div style=&quot;width:140px;height:140px;display:flex;align-items:center;justify-content:center;background:#FEE2E2;color:#991b1b;border-radius:6px;font-size:11px&quot;>❌ 加载失败</div>'">
+        </div>
+        <div class="pet-img-status" style="font-size:11px;text-align:center;margin-bottom:6px;font-weight:600;min-height:16px">
+          <!-- 实时由 updateStatus 填充 -->
+        </div>
+        <div style="font-size:9px;color:var(--c-muted);text-align:center;margin-bottom:6px">图 #${idx+1}</div>
+        <select class="form-select pet-map-sel" data-img="${url}" data-idx="${idx}" style="font-size:11px;padding:4px;width:100%">
+          <option value="">-- 不映射(显示 emoji) --</option>
+          ${Object.entries(current).map(([k,p])=>`
+            <optgroup label="${p.name}">
+              <option value="${k}:base" ${selectedVal===k+':base'?'selected':''}>${p.name} · 普通(站立)</option>
+              <option value="${k}:eat" ${selectedVal===k+':eat'?'selected':''}>${p.name} · 开心(吃食)</option>
+              <option value="${k}:sleep" ${selectedVal===k+':sleep'?'selected':''}>${p.name} · 萎靡(休息)</option>
+            </optgroup>
+          `).join('')}
+        </select>
+      </div>`;
+    }).join('');
     
-    // 汇总:看哪种命名规则最成功
-    const naming = {hyphen:0, underscore:0, single:0};
-    Object.values(results).forEach(r=>{
-      r.hits.forEach(n=>{
-        if(n.includes('-')) naming.hyphen++;
-        else if(n.includes('_')) naming.underscore++;
-        else naming.single++;
-      });
-    });
-    
-    let report = '';
-    const recommend = naming.hyphen>=naming.underscore && naming.hyphen>=naming.single ? '横线 fox-base.png' :
-                       naming.underscore>=naming.single ? '下划线 fox_base.png' : '单文件 fox.png';
-    
-    Object.entries(results).forEach(([key, r])=>{
-      const status = r.hits.length>0 ? `<span style="color:#15803d">✅ ${r.hits.join(', ')}</span>` : `<span style="color:#dc2626">❌ 都失败</span>`;
-      report += `<div style="padding:4px 8px;border-bottom:1px solid #eee;font-size:12px"><strong>${key}</strong>: ${status}</div>`;
-    });
-    
-    Modal.open('🔍 宠物图片访问测试结果',`
+    Modal.open('🎨 宠物图片映射配置(15 张图)',`
       <div style="line-height:1.7">
-        <div style="padding:12px;background:${ok>0?'#D4EDDA':'#FEE2E2'};border-radius:6px;margin-bottom:12px">
-          <div style="font-size:14px;font-weight:600;color:${ok>0?'#15803d':'#991b1b'}">
-            ${ok>0?'✅ 部分图片可访问':'❌ 所有图片都不可访问'}
-          </div>
-          <div style="font-size:12px;margin-top:6px">成功 ${ok}/${total} 张</div>
-          ${ok>0?`<div style="font-size:12px;margin-top:6px">📌 推荐命名规则:<strong>${recommend}</strong></div>`:''}
+        <div style="padding:12px;background:#FEF3C7;border-radius:6px;font-size:12px;margin-bottom:14px;line-height:1.7">
+          💡 <strong>使用方法(很简单)</strong>:<br>
+          1. 看清楚每张图里是什么动物、什么动作<br>
+          2. 在图片下方下拉框,选择对应的"宠物名 · 状态"<br>
+          3. 卡片上方绿色 ✓ 标签 = <strong>您当前的选择</strong>(实时显示)<br>
+          4. 没冲突时【确定】按钮可点 → 保存 + 自动同步云端<br><br>
+          <strong>状态说明</strong>:<br>
+          • <strong>普通(站立)</strong>:选宠/默认显示<br>
+          • <strong>开心(吃食)</strong>:心情好或在吃东西<br>
+          • <strong>萎靡(休息)</strong>:饿了/睡着/低等级时显示<br><br>
+          ⚠️ <strong>每只宠物的每个状态只能对应 1 张图</strong>。重复选会冲突,保存按钮自动禁用。
         </div>
         
-        ${ok===0?`<div style="padding:12px;background:#FEF3C7;border-radius:6px;margin-bottom:12px">
-          <div style="font-weight:600;color:#92400e;margin-bottom:6px">💡 全部失败的可能原因</div>
-          <div style="font-size:13px;line-height:1.7">
-            1. <strong>GitHub 仓库还没有 pet-images 文件夹</strong> → 您要上传图片<br>
-            2. <strong>仓库是私有的</strong> → raw URL 无法访问,需改公开 / 用图床<br>
-            3. <strong>文件名跟所有候选都不一样</strong> → 用【⚙️ 改图床 URL】配合您自己的命名<br>
-            4. <strong>网络问题</strong> → GitHub 在国内访问慢,可考虑用国内图床
-          </div>
-        </div>`:''}
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;max-height:500px;overflow-y:auto;padding:6px">
+          ${cardsHtml}
+        </div>
         
-        <details ${ok>0?'':'open'} style="margin-bottom:10px">
-          <summary style="cursor:pointer;font-weight:600;color:var(--c-primary)">▸ 详细测试结果(45 次访问)</summary>
-          <div style="max-height:400px;overflow-y:auto;border:1px solid var(--c-border);border-radius:4px;margin-top:8px">
-            ${report}
+        <div id="petMapStatus" style="margin-top:10px;font-size:12px;color:var(--c-muted);padding:0"></div>
+        
+        <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-outline" onclick="document.querySelectorAll('.pet-map-sel').forEach(s=>{s.value='';s.dispatchEvent(new Event('change'))})" style="font-size:12px">🗑️ 全部清空(重新开始)</button>
+          <button class="btn btn-sm btn-outline" data-action="cloud-pet-mapping-reset" style="font-size:12px">↺ 恢复默认映射</button>
+          <div style="flex:1"></div>
+        </div>
+      </div>
+    `, async()=>{
+      // 保存:收集每个下拉框的选择
+      const newMapping={};
+      const comboToImages={};  // {petKey-state: [{url, idx}, ...]}
+      
+      document.querySelectorAll('.pet-map-sel').forEach((sel, idx)=>{
+        const url=sel.dataset.img;
+        const val=sel.value;
+        if(!val)return;
+        const combo=val.replace(':','-');  // crane:eat → crane-eat
+        if(!comboToImages[combo])comboToImages[combo]=[];
+        comboToImages[combo].push({url, idx, sel});
+      });
+      
+      // 找出所有冲突:同一 combo 对应了多张图
+      const conflicts = Object.entries(comboToImages).filter(([_,imgs])=>imgs.length>1);
+      
+      if(conflicts.length>0){
+        // 🆕 v10.12:精确显示冲突详情 + 自动高亮 + 引导修复
+        let conflictHtml = '<div style="line-height:1.85">';
+        conflictHtml += '<div style="padding:12px;background:#FEE2E2;border-radius:6px;margin-bottom:12px"><strong style="color:#991b1b">🔴 检测到 '+conflicts.length+' 处配置冲突</strong></div>';
+        
+        conflicts.forEach(([combo, imgs])=>{
+          // 把 combo 翻译成宠物中文名 + 状态
+          const [petKey, state] = combo.split('-');
+          const petName = (PET_TYPES[petKey] && PET_TYPES[petKey].name) || petKey;
+          const stateName = {base:'普通(站立)', eat:'开心(吃食)', sleep:'萎靡(休息)'}[state] || state;
+          
+          conflictHtml += `<div style="margin-bottom:14px;padding:10px;background:#fff;border:2px solid #dc2626;border-radius:6px">`;
+          conflictHtml += `<div style="font-weight:600;color:#991b1b;margin-bottom:8px">⚠️ <strong>${petName} · ${stateName}</strong> 被 ${imgs.length} 张图同时选中:</div>`;
+          conflictHtml += '<div style="display:flex;gap:10px;flex-wrap:wrap">';
+          imgs.forEach(({url, idx})=>{
+            conflictHtml += `<div style="text-align:center"><img src="${url}" style="width:80px;height:80px;object-fit:contain;background:#FAFAFA;border-radius:6px;border:2px solid #dc2626"><div style="font-size:11px;color:#991b1b;margin-top:4px">图 #${idx+1}</div></div>`;
+          });
+          conflictHtml += '</div>';
+          conflictHtml += `<div style="margin-top:10px;font-size:12px;color:var(--c-ink-2);line-height:1.7">💡 <strong>请决定</strong>:其中只能保留 <strong>1 张</strong> 是 "${petName}·${stateName}",其他改为别的状态(或选 "-- 不映射 --")</div>`;
+          conflictHtml += '</div>';
+        });
+        
+        // 高亮冲突的下拉框
+        document.querySelectorAll('.pet-map-sel').forEach(s=>{
+          s.style.outline = '';
+          s.style.background = '';
+        });
+        conflicts.forEach(([_,imgs])=>{
+          imgs.forEach(({sel})=>{
+            sel.style.outline = '3px solid #dc2626';
+            sel.style.background = '#FEE2E2';
+            // 滚到视野(只滚到第一个)
+          });
+        });
+        // 滚到第一个冲突
+        if(conflicts[0] && conflicts[0][1][0] && conflicts[0][1][0].sel){
+          setTimeout(()=>{
+            conflicts[0][1][0].sel.scrollIntoView({behavior:'smooth', block:'center'});
+          }, 300);
+        }
+        
+        conflictHtml += '<div style="margin-top:12px;padding:10px;background:#FEF3C7;border-radius:6px;font-size:12px;line-height:1.7">';
+        conflictHtml += '✅ <strong>修改后的下拉框已用红框标记</strong>,关闭此提示后修改即可<br>';
+        conflictHtml += '💡 提示:如果两张图看起来一样,可能图床上传了重复图,选其中一张 "-- 不映射 --" 即可';
+        conflictHtml += '</div></div>';
+        
+        // 用 Modal 显示详细冲突信息
+        Modal.open('🔴 配置冲突详情(请修复)', conflictHtml, null);
+        return false;
+      }
+      
+      // 没有冲突:正式构建 newMapping
+      Object.entries(comboToImages).forEach(([combo, imgs])=>{
+        const [petKey, state] = combo.split('-');
+        if(!newMapping[petKey])newMapping[petKey]={};
+        newMapping[petKey][state] = imgs[0].url;
+      });
+      
+      // 至少要有 base 才能保存
+      const missingBase=[];
+      Object.keys(PET_TYPES_DEFAULT).forEach(k=>{
+        if(!newMapping[k] || !newMapping[k].base){
+          missingBase.push(PET_TYPES_DEFAULT[k].name);
+        }
+      });
+      
+      if(missingBase.length>0){
+        const proceed=confirm(`以下宠物缺少 base(默认状态)图:\n${missingBase.join('、')}\n\n这些宠物会显示 emoji 兜底。\n\n确定保存吗?`);
+        if(!proceed)return false;
+      }
+      
+      try{
+        // 🆕 v10.11:同时存 localStorage(快速读)+ DataStore(自动云同步)
+        localStorage.setItem('yj_pet_mapping', JSON.stringify(newMapping));
+        
+        // 写入 settings 表,这样会自动 push 到云端 yj_settings
+        try{
+          await DataStore.put('settings', {
+            id: 'pet_mapping',
+            value: newMapping,
+            scope: 'global',  // 标记为全局配置,所有设备共享
+            updatedBy: Auth.current.id,
+            updatedByName: Auth.current.name,
+            updatedAt: Date.now()
+          });
+          console.log('[Pet] 映射已写入 settings,会自动同步到云端');
+        }catch(syncErr){
+          console.warn('[Pet] 映射同步到云端失败(本地保存成功)',syncErr);
+        }
+        
+        Toast.success('✅ 映射已保存(本地+云端),2 秒后刷新页面');
+        Logger.log('pet_mapping_update','店长更新宠物图片映射(已同步云端)');
+        setTimeout(()=>location.reload(), 2000);
+      }catch(e){
+        Toast.error('保存失败:'+e.message);
+        return false;
+      }
+    });
+    
+    // 🆕 v10.12 实时显示状态 + 每张卡的归属同步更新
+    setTimeout(()=>{
+      const updateStatus=()=>{
+        const sels=document.querySelectorAll('.pet-map-sel');
+        const used={};  // {combo: [{idx, sel, card}]}
+        let mapped=0;
+        const stateNames={base:'普通(站立)', eat:'开心(吃食)', sleep:'萎靡(休息)'};
+        
+        sels.forEach((s,idx)=>{
+          const card=s.closest('.pet-img-card');
+          const statusBox=card?card.querySelector('.pet-img-status'):null;
+          
+          // 先重置卡片状态
+          if(card){
+            card.style.border='2px solid var(--c-border)';
+            card.style.background='#fff';
+          }
+          s.style.outline='';
+          s.style.background='';
+          
+          if(s.value){
+            // 已选择 → 显示绿色"已选"标签
+            mapped++;
+            const [petKey,state]=s.value.split(':');
+            const petName=(PET_TYPES[petKey] && PET_TYPES[petKey].name)||petKey;
+            const stateName=stateNames[state]||state;
+            if(statusBox){
+              statusBox.innerHTML=`<span style="color:#15803d">✓ ${petName} · ${stateName}</span>`;
+            }
+            if(!used[s.value])used[s.value]=[];
+            used[s.value].push({idx, sel:s, card});
+          }else{
+            // 未选 → 显示灰色"未分配"
+            if(statusBox){
+              statusBox.innerHTML=`<span style="color:#94a3b8">— 未分配 —</span>`;
+            }
+          }
+        });
+        
+        const conflicts=Object.entries(used).filter(([_,arr])=>arr.length>1);
+        const statusEl=document.getElementById('petMapStatus');
+        const saveBtn=document.querySelector('.modal .btn-primary');
+        
+        if(conflicts.length>0){
+          // 把冲突的卡和下拉框加红框
+          conflicts.forEach(([combo, arr])=>{
+            arr.forEach(({sel, card})=>{
+              sel.style.outline='3px solid #dc2626';
+              sel.style.background='#FEE2E2';
+              if(card){
+                card.style.border='3px solid #dc2626';
+                card.style.background='#FEF2F2';
+              }
+            });
+          });
+          
+          const conflictDetail = conflicts.map(([combo,arr])=>{
+            const [petKey,state]=combo.split(':');
+            const petName=(PET_TYPES[petKey] && PET_TYPES[petKey].name)||petKey;
+            const stateName=stateNames[state]||state;
+            const imgNos = arr.map(({idx})=>`#${idx+1}`).join('、');
+            return `<strong>${petName} · ${stateName}</strong>(图 ${imgNos})`;
+          }).join('<br>');
+          
+          if(statusEl){
+            statusEl.innerHTML=`<div style="padding:8px;background:#FEE2E2;border-radius:4px;border-left:4px solid #dc2626">
+              <div style="color:#991b1b;font-weight:600;margin-bottom:6px">⚠️ ${conflicts.length} 处冲突 — 红框卡片选了重复组合</div>
+              <div style="font-size:12px;color:#7f1d1d;line-height:1.7">${conflictDetail}</div>
+              <div style="margin-top:8px;font-size:11px;color:#7f1d1d">💡 每只宠物的每个状态<strong>只能</strong>对应 1 张图。请把多余的红框卡改成"不映射"或别的状态</div>
+            </div>`;
+            statusEl.style.background='transparent';
+            statusEl.style.padding='0';
+          }
+          
+          // 禁用保存按钮
+          if(saveBtn){
+            saveBtn.disabled=true;
+            saveBtn.style.opacity='0.5';
+            saveBtn.style.cursor='not-allowed';
+            saveBtn.title='有冲突,先解决冲突';
+          }
+        }else{
+          if(statusEl){
+            const remaining=15-mapped;
+            statusEl.innerHTML=remaining>0
+              ? `<div style="padding:8px;background:#FEF3C7;border-radius:4px">📋 已映射 <strong>${mapped}/15</strong> 张 · 还有 <strong>${remaining}</strong> 张未分配(可继续映射或保存,未分配的图不会被使用)</div>`
+              : `<div style="padding:8px;background:#D1FAE5;border-radius:4px;color:#15803d;font-weight:600">✅ 完美!15 张图全部映射,且无冲突 — 可以保存</div>`;
+            statusEl.style.background='transparent';
+            statusEl.style.padding='0';
+          }
+          
+          // 启用保存按钮
+          if(saveBtn){
+            saveBtn.disabled=false;
+            saveBtn.style.opacity='';
+            saveBtn.style.cursor='';
+            saveBtn.title='';
+          }
+        }
+      };
+      document.querySelectorAll('.pet-map-sel').forEach(s=>s.addEventListener('change',updateStatus));
+      updateStatus();
+    },100);
+  },
+  
+  // 恢复默认映射
+  resetPetMapping(){
+    if(!confirm('确定恢复到系统默认的图片映射吗?\n您当前的配置会丢失。'))return;
+    localStorage.removeItem('yj_pet_mapping');
+    Toast.success('✅ 已恢复默认,2 秒后刷新');
+    setTimeout(()=>location.reload(),2000);
+  },
+
+  // 🆕 v10.9:宠物图片可视化映射工具 — 店长直接点点就能调整图片归属
+  async testPetImg(){
+    // 当前映射状态
+    const cur = {};
+    Object.entries(PET_TYPES).forEach(([type, t])=>{
+      cur[type] = {
+        base: t.img?.base || '',
+        eat:  t.img?.eat || '',
+        sleep:t.img?.sleep || ''
+      };
+    });
+    
+    // 15 张图池(PET_IMG_POOL)
+    const pool = PET_IMG_POOL || [];
+    
+    // 生成下拉 option 选项
+    const optionsHtml = pool.map((url, i) => {
+      // 检查这个 URL 当前被谁占用
+      let usedBy = '';
+      Object.entries(cur).forEach(([type, slots])=>{
+        Object.entries(slots).forEach(([state, u])=>{
+          if(u === url){
+            const t = PET_TYPES[type];
+            usedBy = `${t.name} ${state==='base'?'基础':state==='eat'?'开心':'萎靡'}`;
+          }
+        });
+      });
+      return {url, idx:i+1, usedBy};
+    });
+    
+    // 生成 5×3 的下拉选择区
+    const petList = [
+      {type:'cat',    label:'🐱 空灵猫'},
+      {type:'fox',    label:'🦊 灵狐'},
+      {type:'rabbit', label:'🐰 玉兔'},
+      {type:'deer',   label:'🦌 星辰鹿'},
+      {type:'crane',  label:'🦢 云鹤'},
+    ];
+    
+    const stateList = [
+      {key:'base',  label:'✨ 基础(站立/普通)'},
+      {key:'eat',   label:'🍡 开心(吃东西)'},
+      {key:'sleep', label:'😴 萎靡(休息/睡觉)'},
+    ];
+    
+    function makeSelect(petType, stateKey){
+      const curUrl = cur[petType]?.[stateKey] || '';
+      const selectedIdx = pool.findIndex(u=>u===curUrl);
+      let opts = `<option value="">— 不设置(用 emoji)—</option>`;
+      pool.forEach((url, i)=>{
+        const selected = i === selectedIdx ? 'selected' : '';
+        opts += `<option value="${url}" ${selected}>第 ${i+1} 张 (${url.slice(-12)})</option>`;
+      });
+      return `<select class="form-select pet-map-select" data-type="${petType}" data-state="${stateKey}" style="font-size:12px;width:100%">${opts}</select>`;
+    }
+    
+    Modal.open('🎨 宠物图片重新映射(可视化对号工具)', `
+      <div style="line-height:1.7;max-height:80vh;overflow-y:auto">
+        <div style="padding:12px;background:#FEF3C7;border-radius:8px;font-size:13px;margin-bottom:14px;line-height:1.7">
+          💡 <strong>说明</strong>:左边是 15 张图的实际预览,右边是 5 只宠物 × 3 状态的下拉框。<br>
+          • 您先看左边图实际是什么宠物什么状态<br>
+          • 再把右边对应宠物状态的下拉框,改成"第 N 张"<br>
+          • 全部对应好后,点底部【💾 保存映射】<br>
+          • 系统会立即生效,新选宠和已有宠物都会用新图<br>
+          ✨ 不用改代码,完全可视化!
+        </div>
+        
+        <!-- 15 张图实景预览 -->
+        <details open style="margin-bottom:14px">
+          <summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--c-primary);padding:8px 0">
+            🖼️ 步骤 1:看图认宠(15 张图实景预览)
+          </summary>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-top:10px">
+            ${optionsHtml.map(item=>`
+              <div style="border:2px solid ${item.usedBy?'var(--c-gold)':'var(--c-border)'};border-radius:8px;padding:6px;background:#fff;text-align:center;font-size:11px">
+                <div style="background:var(--c-cream);border-radius:4px;aspect-ratio:1;display:flex;align-items:center;justify-content:center;margin-bottom:4px;overflow:hidden">
+                  <img src="${item.url}" style="max-width:100%;max-height:100%;object-fit:contain"
+                       onerror="this.outerHTML='<div style=&quot;color:#dc2626;font-size:10px&quot;>❌</div>'">
+                </div>
+                <div style="font-weight:600;color:var(--c-primary)">第 ${item.idx} 张</div>
+                ${item.usedBy?`<div style="color:var(--c-gold);font-size:9px;margin-top:2px">→ ${item.usedBy}</div>`:'<div style="color:var(--c-muted);font-size:9px;margin-top:2px">未分配</div>'}
+              </div>
+            `).join('')}
           </div>
         </details>
         
-        <div style="font-size:11px;color:var(--c-muted);margin-top:8px">
-          当前 URL 前缀:<code>${escapeHtml(PET_IMG_BASE)}</code>
+        <!-- 5×3 映射表 -->
+        <details open style="margin-bottom:14px">
+          <summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--c-primary);padding:8px 0">
+            🎯 步骤 2:调整对应关系
+          </summary>
+          <div style="margin-top:10px">
+            ${petList.map(pet=>`
+              <div style="margin-bottom:14px;padding:10px;background:var(--c-cream);border-radius:8px">
+                <div style="font-size:14px;font-weight:600;color:var(--c-primary);margin-bottom:8px">${pet.label}</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
+                  ${stateList.map(state=>`
+                    <div>
+                      <div style="font-size:11px;color:var(--c-ink-2);margin-bottom:3px">${state.label}</div>
+                      <div style="display:flex;gap:4px;align-items:center">
+                        <div style="width:36px;height:36px;background:#fff;border:1px solid var(--c-border);border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+                          ${cur[pet.type]?.[state.key]?`<img src="${cur[pet.type][state.key]}" style="max-width:100%;max-height:100%;object-fit:contain" data-preview="${pet.type}-${state.key}" onerror="this.outerHTML='❌'">`:'<span style="font-size:18px">'+PET_TYPES[pet.type].emoji+'</span>'}
+                        </div>
+                        <div style="flex:1">${makeSelect(pet.type, state.key)}</div>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </details>
+        
+        <div style="padding:12px;background:#E0F2FE;border-radius:8px;margin-bottom:10px;font-size:12px;line-height:1.7">
+          📝 <strong>提示</strong>:<br>
+          • 同一张图可被多个宠物使用(比如 base 用 1 张,eat 也用同一张)<br>
+          • 不选(留空)= 该状态用 emoji 显示<br>
+          • 点【🔄 恢复默认】回到我推测的"猫狐兔鹿鹤"顺序<br>
+          • 想清空所有映射 → 点【🗑️ 清空全部】
         </div>
       </div>
-    `, null);
+    `, async () => {
+      // 收集所有 select 的当前选择
+      const newMapping = {};
+      petList.forEach(pet=>{
+        newMapping[pet.type] = {};
+        stateList.forEach(state=>{
+          const sel = document.querySelector(`.pet-map-select[data-type="${pet.type}"][data-state="${state.key}"]`);
+          if(sel && sel.value){
+            newMapping[pet.type][state.key] = sel.value;
+          }
+        });
+      });
+      
+      try{
+        localStorage.setItem('yj_pet_mapping', JSON.stringify(newMapping));
+        Logger.log('pet_mapping_update', `店长更新了宠物图片映射`);
+        Toast.success('✅ 映射已保存!1.5秒后刷新页面...');
+        setTimeout(()=>location.reload(), 1500);
+      }catch(e){
+        Toast.error('保存失败:'+e.message);
+        return false;
+      }
+    });
+    
+    // 绑定预览同步:select 变化时,左边小预览跟着变
+    setTimeout(()=>{
+      document.querySelectorAll('.pet-map-select').forEach(sel=>{
+        sel.addEventListener('change', e=>{
+          const type = e.target.dataset.type;
+          const state = e.target.dataset.state;
+          const url = e.target.value;
+          const preview = document.querySelector(`img[data-preview="${type}-${state}"]`);
+          const previewBox = preview?.parentElement;
+          if(previewBox){
+            if(url){
+              previewBox.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain" data-preview="${type}-${state}" onerror="this.outerHTML='❌'">`;
+            }else{
+              previewBox.innerHTML = `<span style="font-size:18px">${PET_TYPES[type].emoji}</span>`;
+            }
+          }
+        });
+      });
+      
+      // 加底部按钮:恢复默认 / 清空
+      const modalBody = document.querySelector('.modal-body');
+      if(modalBody && !document.getElementById('petMapResetBtn')){
+        const tools = document.createElement('div');
+        tools.style.cssText = 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;border-top:1px dashed var(--c-border);padding-top:10px';
+        tools.innerHTML = `
+          <button class="btn btn-sm btn-outline" id="petMapResetBtn" style="font-size:12px">🔄 恢复默认推测</button>
+          <button class="btn btn-sm btn-ghost" id="petMapClearBtn" style="font-size:12px;color:var(--c-danger)">🗑️ 全部清空(都用 emoji)</button>
+        `;
+        modalBody.appendChild(tools);
+        
+        document.getElementById('petMapResetBtn').onclick = ()=>{
+          if(!confirm('恢复到 v10.9 的默认映射推测?\n(猫狐兔鹿鹤 × base/eat/sleep)'))return;
+          localStorage.removeItem('yj_pet_mapping');
+          Toast.success('✅ 已恢复默认,1.5秒后刷新...');
+          setTimeout(()=>location.reload(), 1500);
+        };
+        document.getElementById('petMapClearBtn').onclick = ()=>{
+          if(!confirm('清空所有映射?所有宠物都将显示 emoji'))return;
+          const empty = {cat:{},fox:{},rabbit:{},deer:{},crane:{}};
+          localStorage.setItem('yj_pet_mapping', JSON.stringify(empty));
+          Toast.success('✅ 已清空,1.5秒后刷新...');
+          setTimeout(()=>location.reload(), 1500);
+        };
+      }
+    }, 100);
   },
   
   // 🆕 v10.7:改图床 URL 前缀
@@ -12268,6 +12884,8 @@ document.addEventListener('click',async e=>{
       CloudModule.refresh();
     },
     'cloud-test-pet-img':()=>CloudModule.testPetImg(),
+    'cloud-pet-mapping':()=>CloudModule.showPetMapping(),
+    'cloud-pet-mapping-reset':()=>CloudModule.resetPetMapping(),
     'cloud-set-pet-base':()=>CloudModule.setPetBase(),
     'cloud-pull':()=>CloudModule.pull(),
     'cloud-push':()=>CloudModule.push(),
