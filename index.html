@@ -7062,6 +7062,16 @@ const CustomerServiceModule = {
         </div>
       </div>
 
+      <button data-action="cs-quick-entry" style="margin-top:14px;width:100%;border:none;cursor:pointer;background:linear-gradient(135deg,#6366F1,#8B5CF6);color:#fff;border-radius:12px;padding:16px;display:flex;align-items:center;gap:12px;box-shadow:0 4px 14px rgba(99,102,241,0.35);transition:transform .15s"
+        onmousedown="this.style.transform='scale(0.98)'" onmouseup="this.style.transform='scale(1)'" onmouseleave="this.style.transform='scale(1)'">
+        <div style="font-size:32px;line-height:1">✨</div>
+        <div style="text-align:left;flex:1">
+          <div style="font-size:16px;font-weight:700">AI 极速录入</div>
+          <div style="font-size:12px;opacity:0.92;margin-top:2px">截图 / 文字一粘,自动拆出姓名·电话·来源·日期</div>
+        </div>
+        <div style="font-size:20px;opacity:0.8">›</div>
+      </button>
+
       <div class="overview-grid" style="margin-top:14px">
         <div class="stat-card">
           <div class="stat-card-label">今日客资</div>
@@ -7598,6 +7608,22 @@ const CustomerServiceModule = {
         <div style="font-weight:600;color:#b45309">📉 最弱渠道:${escapeHtml(worst[0])}</div>
         <div style="font-size:13px;color:var(--c-ink-2);margin-top:4px">转化率 ${Math.round(worst[1].deal/worst[1].total*1000)/10}% · 考虑优化或减少投入</div>
       </div>`:''}
+      ${(()=>{
+        // 🆕 v11 AI 极速录入效果统计
+        const aiList=mList.filter(r=>r.quickEntry);
+        const aiDeal=aiList.filter(r=>r.status==='deal');
+        const manualList=mList.filter(r=>!r.quickEntry);
+        if(aiList.length===0)return '';
+        const aiCr=aiList.length?Math.round(aiDeal.length/aiList.length*1000)/10:0;
+        const aiPct=Math.round(aiList.length/mList.length*1000)/10;
+        return `<div style="margin-top:14px;padding:12px;background:linear-gradient(135deg,#EEF2FF,#F0F9FF);border-radius:8px;border-left:4px solid #6366F1">
+          <div style="font-weight:600;color:#4338ca">✨ AI 极速录入效果</div>
+          <div style="font-size:13px;color:var(--c-ink-2);margin-top:6px;line-height:1.8">
+            本月 AI 录入 <strong>${aiList.length}</strong> 条(占全部 ${aiPct}%)· 成交 <strong>${aiDeal.length}</strong> 条 · 转化率 <strong style="color:${aiCr>=40?'#15803d':'#b45309'}">${aiCr}%</strong><br>
+            <span style="color:var(--c-muted);font-size:12px">AI 录入让客资登记更快,响应越快通常转化越高</span>
+          </div>
+        </div>`;
+      })()}
     `;
   },
 
@@ -7700,7 +7726,7 @@ const CustomerServiceModule = {
         <div class="card" style="margin-bottom:10px;cursor:pointer;border-left:4px solid ${r.flagged?'#ef4444':r.starred?'#f59e0b':status==='deal'?'#22c55e':status==='arrived'?'#3b82f6':'var(--c-border)'}" data-action="cs-edit" data-id="${r.id}">
           <div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">
             <div style="flex:1;min-width:180px">
-              <div style="font-weight:600;font-size:15px">${stars}${flag}${escapeHtml(r.customerName||'(未填客户名)')}${totalPeople>0?` <span style="font-size:12px;color:var(--c-muted);font-weight:normal">(共${totalPeople}人)</span>`:''}${sleepBadge}</div>
+              <div style="font-weight:600;font-size:15px">${stars}${flag}${escapeHtml(r.customerName||'(未填客户名)')}${totalPeople>0?` <span style="font-size:12px;color:var(--c-muted);font-weight:normal">(共${totalPeople}人)</span>`:''}${sleepBadge}${r.quickEntry?` <span style="display:inline-block;padding:2px 7px;background:linear-gradient(135deg,#EEF2FF,#E0E7FF);color:#4338ca;border-radius:10px;font-size:10px;font-weight:600;margin-left:4px" title="通过 AI 极速录入创建">✨ AI录入</span>`:''}</div>
               <div style="font-size:13px;color:var(--c-muted);margin-top:4px;line-height:1.7">
                 📅 ${escapeHtml(r.bookingDate||'未定')} ${escapeHtml(r.bookingTime||'')}<br>
                 📞 ${escapeHtml(r.phone||'未填电话')}<br>
@@ -8572,6 +8598,367 @@ const CustomerServiceModule = {
         return false;
       }
     });
+  }
+};
+
+
+/* ============ 🆕 v11 QuickEntryModule AI 极速客资录入 ============ */
+/* 设计原则:扔一张截图 / 一段文字 → 自动拆字段 → 微型确认框 → 一键入库
+   核心:解析失败也绝不卡住(识别不出的内容全进备注),所见即所得可当场改 */
+const QuickEntryModule = {
+  // 解析字典:渠道关键词 → 标准来源名
+  // ⚠️ 顺序即优先级:更具体/信号更强的关键词排在前面
+  SOURCE_MAP: [
+    {kw:['美团','大众','点评'], val:'美团大众点评'},
+    {kw:['抖音','dy','douyin'], val:'抖音'},
+    {kw:['小红书','xhs','red'], val:'小红书'},
+    {kw:['老客','回头客','二次','复购'], val:'老客户'},
+    {kw:['酒店'], val:'酒店推荐'},
+    {kw:['转介绍','朋友介绍','朋友推荐','介绍'], val:'转介绍'},
+    {kw:['推荐'], val:'推荐'},
+    {kw:['微信','wx','vx','加微'], val:'微信'}
+  ],
+
+  // 入口:打开极速录入对话框
+  open(){
+    const u=Auth.current;
+    if(!u)return;
+    const isCustomerRole=(LEVELS[u.level]||{}).type==='customer';
+    const isAdmin=u.role==='admin';
+    if(!isCustomerRole && !isAdmin){
+      Toast.error('仅客服与店长可用');return;
+    }
+
+    Modal.open('✨ AI 极速录入', `
+      <div style="line-height:1.7">
+        <div style="padding:10px 12px;background:linear-gradient(135deg,#EEF2FF,#F0F9FF);border-radius:8px;font-size:12px;color:#3730a3;margin-bottom:12px;line-height:1.7">
+          💡 <strong>怎么用</strong>:把美团/微信的聊天截图、通知短信、或语音转文字的内容,<strong>直接粘贴</strong>到下面的框里 → 点【智能解析】<br>
+          📱 手机:长按输入框选"粘贴" &nbsp;|&nbsp; 💻 电脑:点框内后按 Ctrl+V
+        </div>
+
+        <div class="form-item">
+          <label class="form-label">粘贴区(支持文字 / 截图)</label>
+          <textarea class="form-input" id="qeInput" rows="6" 
+            placeholder="示例:&#10;美团 王女士 138xxxx8888 想约本周六下午3点 婚纱跟妆&#10;&#10;也可以直接 Ctrl+V 粘贴截图,系统会自动识别图里的文字"
+            style="font-size:14px;line-height:1.6"></textarea>
+          <div id="qeImgHint" style="font-size:11px;color:#16a34a;margin-top:4px;display:none">✅ 已粘贴截图,识别中…</div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button class="btn btn-primary" id="qeParseBtn" style="flex:1;font-size:15px;padding:12px">🔍 智能解析</button>
+        </div>
+
+        <div style="font-size:11px;color:var(--c-muted);margin-top:10px;line-height:1.6">
+          🛡 截图只在本地识别文字,<strong>不会存入数据库</strong>(不拖慢同步)<br>
+          🔢 一次可粘贴<strong>多条</strong>客户(每条之间空一行),系统会逐条解析
+        </div>
+      </div>
+    `, null);
+
+    // 延迟绑定(等 DOM 渲染)
+    setTimeout(()=>this._bindEvents(), 80);
+  },
+
+  _bindEvents(){
+    const input=document.getElementById('qeInput');
+    const parseBtn=document.getElementById('qeParseBtn');
+    if(!input || !parseBtn)return;
+
+    input.focus();
+
+    // 粘贴截图监听:抓 image,本地 OCR,文字塞进 textarea,图随即丢弃
+    input.addEventListener('paste', async (e)=>{
+      const items=(e.clipboardData||{}).items||[];
+      for(const it of items){
+        if(it.type && it.type.indexOf('image')===0){
+          e.preventDefault();
+          const blob=it.getAsFile();
+          if(!blob)continue;
+          const hint=document.getElementById('qeImgHint');
+          if(hint){hint.style.display='block';hint.textContent='✅ 已粘贴截图,正在识别文字…';}
+          try{
+            const text=await this._ocrImage(blob);
+            if(text && text.trim()){
+              input.value=(input.value?input.value+'\n':'')+text.trim();
+              if(hint){hint.textContent='✅ 截图文字已提取,可点【智能解析】';hint.style.color='#16a34a';}
+            }else{
+              if(hint){hint.textContent='⚠️ 没识别出文字,请手动输入,或换电脑截图工具识图后粘文字';hint.style.color='#dc2626';}
+            }
+          }catch(err){
+            console.warn('[QuickEntry] OCR 失败',err);
+            if(hint){hint.textContent='⚠️ 截图识别失败,请直接粘贴文字(电脑可用微信/QQ截图的"识图"功能)';hint.style.color='#dc2626';}
+          }
+          // 图片数据用完即弃,不进库
+          return;
+        }
+      }
+      // 不是图片就走默认粘贴(文字)
+    });
+
+    parseBtn.addEventListener('click', ()=>{
+      const raw=input.value.trim();
+      if(!raw){Toast.error('请先粘贴内容');return;}
+      const records=this._parseMulti(raw);
+      if(records.length===0){
+        Toast.error('没解析出有效内容');return;
+      }
+      this._showConfirm(records);
+    });
+  },
+
+  // 浏览器内置 OCR(优先);失败则返回空,让用户走文字
+  async _ocrImage(blob){
+    // 优先用浏览器原生 Text Detection API(部分 Chrome/Edge 支持)
+    if('createImageBitmap' in window && typeof window.TextDetector!=='undefined'){
+      try{
+        const bmp=await createImageBitmap(blob);
+        const detector=new window.TextDetector();
+        const results=await detector.detect(bmp);
+        if(results && results.length){
+          return results.map(r=>r.rawValue).join('\n');
+        }
+      }catch(e){ /* 继续往下 */ }
+    }
+    // 没有原生 OCR 能力 → 返回空,UI 会提示用户走文字方案
+    return '';
+  },
+
+  // 多条解析:按空行拆段,每段解析成一条客资
+  _parseMulti(raw){
+    // 先按 2+ 换行 / "----" 分隔符拆
+    const blocks=raw.split(/\n\s*\n|\n-{3,}\n?/).map(s=>s.trim()).filter(Boolean);
+    const list=(blocks.length?blocks:[raw]).map(b=>this._parseOne(b));
+    return list.filter(Boolean);
+  },
+
+  // 单条解析:从一段文字里抽手机号 / 称呼 / 来源 / 日期 / 备注
+  _parseOne(text){
+    if(!text || !text.trim())return null;
+    const t=text.replace(/\s+/g,' ').trim();
+    const result={
+      customerName:'', phone:'', source:'', bookingDate:'',
+      notes:'', _raw:text.trim(), _hits:[]
+    };
+
+    // 1) 手机号:11 位标准号 / 带横线虚拟号 / 美团隐私号
+    let phone='';
+    const std=t.match(/(?<!\d)1[3-9]\d{9}(?!\d)/);
+    if(std){
+      phone=std[0];
+    }else{
+      // 虚拟号 / 带分隔符:连续数字(中间可有 - 空格),取最长的一串
+      const cand=t.match(/\d[\d\- ]{6,}\d/g);
+      if(cand){
+        cand.sort((a,b)=>b.replace(/\D/g,'').length-a.replace(/\D/g,'').length);
+        phone=cand[0].replace(/[ ]/g,'');
+      }
+    }
+    if(phone){result.phone=phone;result._hits.push('电话');}
+
+    // 2) 客户称呼:抓 "X女士/X先生/X小姐/X姐/X哥" 等
+    let name='';
+    const nameM=t.match(/([\u4e00-\u9fa5]{1,3})(女士|先生|小姐|姐姐|哥哥|姐|哥|女生|男生|宝妈)/);
+    if(nameM){
+      name=nameM[1]+nameM[2];
+    }else{
+      // 抓 "客户：XXX" / "姓名 XXX" 模式
+      const kvM=t.match(/(?:客户|姓名|名字|顾客)[:：\s]+([\u4e00-\u9fa5]{1,4})/);
+      if(kvM)name=kvM[1];
+    }
+    if(name){result.customerName=name;result._hits.push('称呼');}
+
+    // 3) 来源:关键词匹配
+    for(const m of this.SOURCE_MAP){
+      if(m.kw.some(k=>t.toLowerCase().includes(k.toLowerCase()))){
+        result.source=m.val;
+        result._hits.push('来源');
+        break;
+      }
+    }
+
+    // 4) 预约日期:抓 "明天/后天/本周六/X月X日/X-X" 等
+    const dateGuess=this._guessDate(t);
+    if(dateGuess){result.bookingDate=dateGuess.date;result._hits.push('日期');result._dateText=dateGuess.label;}
+
+    // 5) 备注:整段原文都留作备注(信息不丢)
+    result.notes=text.trim();
+
+    return result;
+  },
+
+  // 日期猜测:支持 今天/明天/后天/大后天/周X/本周X/下周X/X月X日/X.X/X-X
+  _guessDate(t){
+    const now=new Date();
+    const fmt=(d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const addDays=(n)=>{const d=new Date(now);d.setDate(d.getDate()+n);return d;};
+
+    if(/今天|今日/.test(t))return {date:fmt(now),label:'今天'};
+    if(/明天|明日/.test(t))return {date:fmt(addDays(1)),label:'明天'};
+    if(/后天/.test(t))return {date:fmt(addDays(2)),label:'后天'};
+    if(/大后天/.test(t))return {date:fmt(addDays(3)),label:'大后天'};
+
+    // 周X / 星期X / 礼拜X
+    const wkM=t.match(/(本周|这周|下周|下个周)?\s*(周|星期|礼拜)\s*([一二三四五六日天1-7])/);
+    if(wkM){
+      const map={'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'日':0,'天':0,'1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':0};
+      const target=map[wkM[3]];
+      if(target!==undefined){
+        let cur=now.getDay();
+        let diff=target-cur;
+        if(diff<0)diff+=7;
+        if(diff===0)diff=7; // 同一天默认下一个
+        if(wkM[1] && /下/.test(wkM[1]))diff+=7;
+        return {date:fmt(addDays(diff)),label:(wkM[1]||'')+'周'+wkM[3]};
+      }
+    }
+
+    // X月X日 / X月X号
+    const mdM=t.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/);
+    if(mdM){
+      const mo=parseInt(mdM[1]), da=parseInt(mdM[2]);
+      if(mo>=1&&mo<=12&&da>=1&&da<=31){
+        let y=now.getFullYear();
+        // 如果月份已过,算明年
+        if(mo<now.getMonth()+1)y++;
+        return {date:`${y}-${String(mo).padStart(2,'0')}-${String(da).padStart(2,'0')}`,label:`${mo}月${da}日`};
+      }
+    }
+
+    // X-X / X.X (当年)
+    const sepM=t.match(/(?<!\d)(\d{1,2})[.\-\/](\d{1,2})(?!\d)/);
+    if(sepM){
+      const mo=parseInt(sepM[1]), da=parseInt(sepM[2]);
+      if(mo>=1&&mo<=12&&da>=1&&da<=31){
+        let y=now.getFullYear();
+        if(mo<now.getMonth()+1)y++;
+        return {date:`${y}-${String(mo).padStart(2,'0')}-${String(da).padStart(2,'0')}`,label:`${mo}/${da}`};
+      }
+    }
+    return null;
+  },
+
+  // 微型确认框:解析结果可当场改,可一键安排
+  async _showConfirm(records){
+    // 预查重:已存在的手机号
+    const allCs=await DataStore.all('cs_reports');
+    const phoneSet={};
+    allCs.forEach(r=>{ if(r.phone)phoneSet[r.phone.replace(/\D/g,'')]=r; });
+
+    const rowsHtml=records.map((rec,i)=>{
+      const dupHit=rec.phone && phoneSet[rec.phone.replace(/\D/g,'')];
+      const hitBadges=rec._hits.length
+        ? rec._hits.map(h=>`<span style="display:inline-block;padding:1px 6px;background:#DCFCE7;color:#15803d;border-radius:8px;font-size:10px;margin-right:3px">✓${h}</span>`).join('')
+        : `<span style="color:#dc2626;font-size:11px">未自动识别到字段,请手动填</span>`;
+      return `
+        <div class="qe-row" data-qe-idx="${i}" style="border:1px solid var(--c-border);border-radius:8px;padding:12px;margin-bottom:10px;background:#fff">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-weight:600;font-size:13px;color:var(--c-primary)">第 ${i+1} 条 ${hitBadges}</div>
+            <button class="btn btn-ghost btn-sm" data-qe-del="${i}" style="color:var(--c-danger);font-size:11px;padding:2px 8px">移除</button>
+          </div>
+          ${dupHit?`<div style="padding:6px 8px;background:#FEF3C7;border-radius:4px;font-size:11px;color:#b45309;margin-bottom:8px">⚠️ 该手机号已存在客资:<strong>${escapeHtml(dupHit.customerName||'未命名')}</strong>(${dupHit.status||'pending'})。仍可录入,但请确认不是重复。</div>`:''}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+              <div style="font-size:11px;color:var(--c-muted);margin-bottom:2px">客户称呼</div>
+              <input class="form-input qe-name" data-i="${i}" value="${escapeHtml(rec.customerName||'')}" placeholder="如 王女士" style="font-size:13px;padding:6px">
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--c-muted);margin-bottom:2px">电话</div>
+              <input class="form-input qe-phone" data-i="${i}" value="${escapeHtml(rec.phone||'')}" placeholder="手机号" inputmode="numeric" style="font-size:13px;padding:6px">
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--c-muted);margin-bottom:2px">来源</div>
+              <select class="form-input qe-source" data-i="${i}" style="font-size:13px;padding:6px">
+                ${CUSTOMER_SOURCES.map(s=>`<option value="${s}" ${rec.source===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--c-muted);margin-bottom:2px">预约日期 ${rec._dateText?`<span style="color:#16a34a">(识别:${rec._dateText})</span>`:''}</div>
+              <input type="date" class="form-input qe-date" data-i="${i}" value="${rec.bookingDate||today()}" style="font-size:13px;padding:6px">
+            </div>
+          </div>
+          <div style="margin-top:8px">
+            <div style="font-size:11px;color:var(--c-muted);margin-bottom:2px">备注(原始内容已保留)</div>
+            <textarea class="form-input qe-notes" data-i="${i}" rows="2" style="font-size:12px;padding:6px;line-height:1.5">${escapeHtml(rec.notes||'')}</textarea>
+          </div>
+        </div>`;
+    }).join('');
+
+    Modal.open(`✅ 确认录入(${records.length} 条)`, `
+      <div style="line-height:1.6">
+        <div style="padding:8px 12px;background:#F0FDF4;border-radius:6px;font-size:12px;color:#15803d;margin-bottom:12px">
+          AI 已拆解关键字段,<strong>请快速核对</strong>(识别错的当场改)。确认后一键录入,自动指派给当前登录人。
+        </div>
+        <div id="qeConfirmList" style="max-height:50vh;overflow-y:auto">${rowsHtml}</div>
+      </div>
+    `, async ()=>{
+      // 收集所有行
+      const rows=document.querySelectorAll('#qeConfirmList .qe-row');
+      if(rows.length===0){Toast.error('没有可录入的客资');return false;}
+      const u=Auth.current;
+      let ok=0, fail=0;
+      for(const row of rows){
+        try{
+          const name=(row.querySelector('.qe-name')?.value||'').trim();
+          const phone=(row.querySelector('.qe-phone')?.value||'').trim();
+          const source=row.querySelector('.qe-source')?.value||CUSTOMER_SOURCES[0];
+          const bookingDate=row.querySelector('.qe-date')?.value||today();
+          const notes=(row.querySelector('.qe-notes')?.value||'').trim();
+          // 称呼兜底
+          const finalName=name||'某女士';
+          const rec={
+            id:uuid(),
+            customerName:finalName,
+            phone:phone,
+            bookingDate:bookingDate,
+            bookingTime:'',
+            source:source,
+            withPhoto:false,
+            women:0,men:0,girls:0,boys:0,
+            bookingType:'定金预约',
+            status:'pending',          // AI 录入默认"待跟进"
+            assignedMuas:[],
+            assignedPhotographer:'',
+            scene:'',
+            assignedTo:u.id,            // 自动指派给当前登录人
+            starred:false,flagged:false,needReview:false,
+            notes:notes,
+            quickEntry:true,            // 🏷 AI 快速录入标记
+            userId:u.id, userName:u.name,
+            createdAt:Date.now()
+          };
+          await DataStore.put('cs_reports', rec);
+          ok++;
+        }catch(e){
+          console.error('[QuickEntry] 录入失败',e);
+          fail++;
+        }
+      }
+      Logger.log('quick_entry', `AI 极速录入 ${ok} 条客资${fail?`(失败 ${fail})`:''}`);
+      if(ok>0){
+        Toast.success(`✅ 已录入 ${ok} 条客资${fail?`,${fail} 条失败`:''}`);
+        // 跳到客资页今日视图
+        CustomerServiceModule.curView='today';
+        Router.go('cs');
+      }else{
+        Toast.error('录入失败,请重试');
+        return false;
+      }
+    });
+
+    // 绑定"移除"按钮
+    setTimeout(()=>{
+      document.querySelectorAll('[data-qe-del]').forEach(btn=>{
+        btn.addEventListener('click',()=>{
+          const row=btn.closest('.qe-row');
+          if(row)row.remove();
+          const left=document.querySelectorAll('#qeConfirmList .qe-row').length;
+          if(left===0){
+            Modal.close();
+            Toast.info('已全部移除');
+          }
+        });
+      });
+    },60);
   }
 };
 
@@ -12896,6 +13283,7 @@ document.addEventListener('click',async e=>{
     'trash-restore':()=>CloudModule.restoreFromTrash(parseInt(t.dataset.i)),
     // 客服 · 客资管理
     'cs-add':()=>CustomerServiceModule.add(),
+    'cs-quick-entry':()=>QuickEntryModule.open(),
     'cs-edit':()=>CustomerServiceModule.edit(id),
     'cs-deal':()=>CustomerServiceModule.markDeal(id),
     'cs-cancel':()=>CustomerServiceModule.markCancel(id),
@@ -13223,6 +13611,7 @@ window.HomeModule=HomeModule;
 window.DataStore=DataStore;
 window.RankModule=RankModule;
 window.CustomerServiceModule=CustomerServiceModule;
+window.QuickEntryModule=QuickEntryModule;
 window.TotalSalaryModule=TotalSalaryModule;
 window.CloudModule=CloudModule;
 window.CloudSync=CloudSync;
